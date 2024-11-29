@@ -20,12 +20,22 @@ use embassy_sync::{
 use embassy_time::Timer;
 use embedded_io_async::Write;
 use heapless::{String, Vec};
-use mqttrs::{
-    decode_slice, Connect, ConnectReturnCode, LastWill, Packet, Pid, Protocol, Publish, QosPid,
-    Subscribe, SubscribeReturnCodes, SubscribeTopic, Unsubscribe,
-};
-
 pub use mqttrs::QoS;
+use mqttrs::{
+    decode_slice,
+    Connect,
+    ConnectReturnCode,
+    LastWill,
+    Packet,
+    Pid,
+    Protocol,
+    Publish,
+    QosPid,
+    Subscribe,
+    SubscribeReturnCodes,
+    SubscribeTopic,
+    Unsubscribe,
+};
 
 pub use crate::buffer::Buffer;
 
