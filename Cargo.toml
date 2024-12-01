@@ -12,6 +12,7 @@ defmt = "0.3.8"
 embassy-net = { version = "0.5.0", features = [
   "dns",
   "medium-ip",
+  "medium-ethernet",
   "proto-ipv4",
   "tcp",
   "defmt",
@@ -27,3 +28,7 @@ embedded-io-async = { version = "0.6.1", features = ["defmt-03"] }
 mqttrs = { version = "0.4.1", default-features = false }
 heapless = "0.7.0"
 embedded-io = { version = "0.6.1", features = ["defmt-03"] }
+once_cell = { version = "1.20.2", default-features = false, features = [
+  "critical-section",
+] }
+hex = { version = "0.4.3", default-features = false }

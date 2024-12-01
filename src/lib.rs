@@ -1,14 +1,19 @@
 #![no_std]
 #![doc = include_str!("../README.md")]
 
-use core::sync::atomic::{AtomicU16, Ordering};
+use core::{
+    fmt::Display,
+    ops::Deref,
+    str,
+    sync::atomic::{AtomicU16, Ordering},
+};
 
 use defmt::{debug, error, info, trace, warn, Debug2Format};
 use embassy_futures::select::{select, select3, Either};
 use embassy_net::{
     dns::DnsQueryType,
     tcp::{TcpReader, TcpSocket, TcpWriter},
-    Stack,
+    HardwareAddress, Stack,
 };
 use embassy_sync::{
     blocking_mutex::raw::CriticalSectionRawMutex,
@@ -22,26 +27,16 @@ use embedded_io_async::Write;
 use heapless::{String, Vec};
 pub use mqttrs::QoS;
 use mqttrs::{
-    decode_slice,
-    Connect,
-    ConnectReturnCode,
-    LastWill,
-    Packet,
-    Pid,
-    Protocol,
-    Publish,
-    QosPid,
-    Subscribe,
-    SubscribeReturnCodes,
-    SubscribeTopic,
-    Unsubscribe,
+    decode_slice, Connect, ConnectReturnCode, LastWill, Packet, Pid, Protocol, Publish, QosPid,
+    Subscribe, SubscribeReturnCodes, SubscribeTopic, Unsubscribe,
 };
+use once_cell::sync::OnceCell;
 
 pub use crate::buffer::Buffer;
 
 mod buffer;
 #[cfg(feature = "homeassistant")]
-mod homeassistant;
+pub mod homeassistant;
 
 // This really needs to match that used by mqttrs.
 const TOPIC_LENGTH: usize = 256;
@@ -62,12 +57,27 @@ static WRITE_PENDING: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 static WRITE_COMPLETE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 static DATA_CHANNEL: Channel<CriticalSectionRawMutex, MqttMessage, 10> = Channel::new();
-static CONTROL_CHANNEL: PubSubChannel<CriticalSectionRawMutex, ControlMessage, 2, 5, 1> =
+static CONTROL_CHANNEL: PubSubChannel<CriticalSectionRawMutex, ControlMessage, 2, 5, 0> =
     PubSubChannel::new();
 
 static PID: AtomicU16 = AtomicU16::new(0);
 
-async fn subscribe() -> Subscriber<'static, CriticalSectionRawMutex, ControlMessage, 2, 5, 1> {
+static DEVICE_TYPE: OnceCell<String<32>> = OnceCell::new();
+static DEVICE_ID: OnceCell<String<32>> = OnceCell::new();
+
+fn device_id() -> &'static str {
+    DEVICE_ID.get().unwrap()
+}
+
+fn device_type() -> &'static str {
+    DEVICE_TYPE.get().unwrap()
+}
+
+fn assign_pid() -> Pid {
+    Pid::new() + PID.fetch_add(1, Ordering::SeqCst)
+}
+
+async fn subscribe() -> Subscriber<'static, CriticalSectionRawMutex, ControlMessage, 2, 5, 0> {
     loop {
         if let Ok(sub) = CONTROL_CHANNEL.subscriber() {
             return sub;
@@ -87,8 +97,8 @@ pub enum Error {
 
 /// An MQTT topic that is optionally prefixed with the device type and unique ID. This allows the
 /// topic to be easily defined as a const before knowing what the device ID is.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Topic<T: AsRef<str>> {
+#[derive(Clone, Copy, Eq)]
+pub enum Topic<T: Deref<Target = str>> {
     /// A topic that is prefixed with the device type.
     DeviceType(T),
     /// A topic that is prefixed with the device type and unique ID.
@@ -97,17 +107,30 @@ pub enum Topic<T: AsRef<str>> {
     General(T),
 }
 
+impl<A: Deref<Target = str>, B: Deref<Target = str>> PartialEq<Topic<A>> for Topic<B> {
+    fn eq(&self, other: &Topic<A>) -> bool {
+        match (self, other) {
+            (Topic::DeviceType(l0), Topic::DeviceType(r0)) => l0.deref() == r0.deref(),
+            (Topic::Device(l0), Topic::Device(r0)) => l0.deref() == r0.deref(),
+            (Topic::General(l0), Topic::General(r0)) => l0.deref() == r0.deref(),
+            _ => false,
+        }
+    }
+}
+
 impl Topic<TopicString> {
-    fn from_str<'a>(device_type: &'a str, device_id: &'a str, mut st: &'a str) -> Result<Self, ()> {
-        let is_prefix =
-            |pr: &str| -> bool { st.starts_with(pr) && &st[pr.len()..pr.len() + 1] == "/" };
+    fn from_str(mut st: &str) -> Result<Self, ()> {
+        let mut strip_prefix = |pr: &str| -> bool {
+            if st.starts_with(pr) && &st[pr.len()..pr.len() + 1] == "/" {
+                st = &st[pr.len() + 1..];
+                true
+            } else {
+                false
+            }
+        };
 
-        if is_prefix(device_type) {
-            st = &st[device_type.len() + 1..];
-
-            if is_prefix(device_id) {
-                st = &st[device_id.len() + 1..];
-
+        if strip_prefix(device_type()) {
+            if strip_prefix(device_id()) {
                 let mut topic = TopicString::new();
                 topic.push_str(st)?;
                 Ok(Topic::Device(topic))
@@ -124,23 +147,18 @@ impl Topic<TopicString> {
     }
 }
 
-impl<T: AsRef<str>> Topic<T> {
-    fn to_string<const N: usize>(
-        &self,
-        device_type: &str,
-        device_id: &str,
-        result: &mut String<N>,
-    ) -> Result<(), ()> {
+impl<T: Deref<Target = str>> Topic<T> {
+    fn to_string<const N: usize>(&self, result: &mut String<N>) -> Result<(), ()> {
         match self {
             Topic::Device(st) => {
-                result.push_str(device_type)?;
+                result.push_str(device_type())?;
                 result.push_str("/")?;
-                result.push_str(device_id)?;
+                result.push_str(device_id())?;
                 result.push_str("/")?;
                 result.push_str(st.as_ref())?;
             }
             Topic::DeviceType(st) => {
-                result.push_str(device_type)?;
+                result.push_str(device_type())?;
                 result.push_str("/")?;
                 result.push_str(st.as_ref())?;
             }
@@ -150,6 +168,16 @@ impl<T: AsRef<str>> Topic<T> {
         }
 
         Ok(())
+    }
+
+    /// Converts to a topic containing an [`str`]. Particularly useful for converting from an owned
+    /// string for match patterns
+    pub fn as_ref(&self) -> Topic<&str> {
+        match self {
+            Topic::DeviceType(st) => Topic::DeviceType(st.as_ref()),
+            Topic::Device(st) => Topic::Device(st.as_ref()),
+            Topic::General(st) => Topic::General(st.as_ref()),
+        }
     }
 }
 
@@ -162,6 +190,9 @@ pub enum MqttMessage {
     Publish(Topic<TopicString>, Payload),
     /// The connection to the broker has been dropped.
     Disconnected,
+    /// Home Assistant has come online and you should send any discovery messages.
+    #[cfg(feature = "homeassistant")]
+    HomeAssistantOnline,
 }
 
 #[derive(Clone)]
@@ -218,34 +249,64 @@ async fn send_packet(packet: Packet<'_>) -> Result<(), Error> {
     }
 }
 
-/// The MQTT task that must be run in order for the stack to operate.
-pub struct McutieTask<'t, T>
-where
-    T: AsRef<str> + 't,
-{
-    network: Stack<'t>,
-    device_type: &'t str,
-    device_id: &'t str,
-    broker: &'t str,
-    last_will: Option<(Topic<T>, Payload)>,
-    username: Option<&'t str>,
-    password: Option<&'t str>,
+pub trait Publishable {
+    type TopicError;
+    type PayloadError;
+
+    fn write_topic(&self, topic: &mut TopicString) -> Result<(), Self::TopicError>;
+
+    fn write_payload(&self, payload: &mut Payload) -> Result<(), Self::PayloadError>;
 }
 
-impl<'t, T> McutieTask<'t, T>
+pub struct State<T: Deref<Target = str>, S: Display> {
+    pub topic: Topic<T>,
+    pub state: S,
+}
+
+impl<T: Deref<Target = str>, S: Display> Publishable for State<T, S> {
+    type TopicError = ();
+    type PayloadError = core::fmt::Error;
+
+    fn write_topic(&self, topic: &mut TopicString) -> Result<(), Self::TopicError> {
+        self.topic.to_string(topic)
+    }
+
+    fn write_payload(&self, payload: &mut Payload) -> Result<(), Self::PayloadError> {
+        use core::fmt::Write;
+
+        write!(payload, "{}", self.state)
+    }
+}
+
+/// The MQTT task that must be run in order for the stack to operate.
+pub struct McutieTask<'t, T, L, const S: usize>
 where
-    T: AsRef<str> + 't,
+    T: Deref<Target = str> + 't,
+    L: Publishable + 't,
 {
+    network: Stack<'t>,
+    broker: &'t str,
+    last_will: Option<L>,
+    username: Option<&'t str>,
+    password: Option<&'t str>,
+    subscriptions: [Topic<T>; S],
+}
+
+impl<'t, T, L, const S: usize> McutieTask<'t, T, L, S>
+where
+    T: Deref<Target = str> + 't,
+    L: Publishable + 't,
+{
+    #[cfg(not(feature = "homeassistant"))]
+    async fn ha_handle_update(&self, topic: &Topic<TopicString>, payload: &Payload) -> bool {
+        false
+    }
+
     async fn recv_loop(&self, mut reader: TcpReader<'_>) -> Result<(), Error> {
         let mut buffer = [0_u8; 4096];
         let mut cursor: usize = 0;
 
-        let controller = match CONTROL_CHANNEL.publisher() {
-            Ok(c) => c,
-            Err(_) => {
-                panic!("Failed to acquire control channel");
-            }
-        };
+        let controller = CONTROL_CHANNEL.immediate_publisher();
 
         loop {
             match reader.read(&mut buffer[cursor..]).await {
@@ -294,6 +355,14 @@ where
             match packet {
                 Packet::Connack(connack) => match connack.code {
                     ConnectReturnCode::Accepted => {
+                        #[cfg(feature = "homeassistant")]
+                        self.ha_after_connected().await;
+
+                        let mcutie = Mcutie {};
+                        for topic in &self.subscriptions {
+                            let _ = mcutie.subscribe(topic, false).await;
+                        }
+
                         DATA_CHANNEL.send(MqttMessage::Connected).await;
                     }
                     _ => {
@@ -305,13 +374,15 @@ where
 
                 Packet::Publish(publish) => {
                     match (
-                        Topic::from_str(self.device_type, self.device_id, publish.topic_name),
+                        Topic::from_str(publish.topic_name),
                         Payload::from(publish.payload),
                     ) {
                         (Ok(topic), Ok(payload)) => {
-                            DATA_CHANNEL
-                                .send(MqttMessage::Publish(topic, payload))
-                                .await;
+                            if !self.ha_handle_update(&topic, &payload).await {
+                                DATA_CHANNEL
+                                    .send(MqttMessage::Publish(topic, payload))
+                                    .await;
+                            }
                         }
                         _ => {
                             error!("Unable to process publish data as it was too large");
@@ -329,10 +400,10 @@ where
                     }
                 }
                 Packet::Puback(pid) => {
-                    controller.publish(ControlMessage::Published(pid)).await;
+                    controller.publish_immediate(ControlMessage::Published(pid));
                 }
                 Packet::Pubrec(pid) => {
-                    controller.publish(ControlMessage::Published(pid)).await;
+                    controller.publish_immediate(ControlMessage::Published(pid));
                     send_packet(Packet::Pubrel(pid)).await?;
                 }
                 Packet::Pubrel(pid) => send_packet(Packet::Pubrel(pid)).await?,
@@ -340,15 +411,16 @@ where
 
                 Packet::Suback(suback) => {
                     if let Some(return_code) = suback.return_codes.first() {
-                        controller
-                            .publish(ControlMessage::Subscribed(suback.pid, *return_code))
-                            .await;
+                        controller.publish_immediate(ControlMessage::Subscribed(
+                            suback.pid,
+                            *return_code,
+                        ));
                     } else {
                         warn!("Unexpected suback with no return codes");
                     }
                 }
                 Packet::Unsuback(pid) => {
-                    controller.publish(ControlMessage::Unsubscribed(pid)).await;
+                    controller.publish_immediate(ControlMessage::Unsubscribed(pid));
                 }
 
                 Packet::Connect(_)
@@ -382,10 +454,10 @@ where
 
             let mut last_will_topic = TopicString::new();
             let mut last_will_payload = Payload::new();
-            let last_will = self.last_will.as_ref().and_then(|(t, p)| {
-                if t.to_string(self.device_type, self.device_id, &mut last_will_topic)
-                    .is_ok()
-                    && embedded_io::Write::write_all(&mut last_will_payload, p).is_ok()
+
+            let last_will = self.last_will.as_ref().and_then(|p| {
+                if p.write_topic(&mut last_will_topic).is_ok()
+                    && p.write_payload(&mut last_will_payload).is_ok()
                 {
                     Some(LastWill {
                         topic: &last_will_topic,
@@ -403,7 +475,7 @@ where
                 .encode_packet(&Packet::Connect(Connect {
                     protocol: Protocol::MQTT311,
                     keep_alive: 60,
-                    client_id: self.device_id,
+                    client_id: device_id(),
                     clean_session: true,
                     last_will,
                     username: self.username,
@@ -523,50 +595,31 @@ impl Receiver {
 }
 
 #[derive(Clone)]
-pub struct Mcutie<'d> {
-    device_type: &'d str,
-    device_id: &'d str,
-}
+pub struct Mcutie {}
 
-impl<'d> Mcutie<'d> {
-    fn assign_pid(&self) -> Pid {
-        Pid::new() + PID.fetch_add(1, Ordering::SeqCst)
-    }
-
+impl Mcutie {
     /// A receiver for messages about state and publications from the broker. While you can obtain
     /// multiple receivers only one will receive a message.
     pub fn receiver(&self) -> Receiver {
         Receiver
     }
 
-    /// Publishes a message with the given QoS level.
-    ///
-    /// If the level is anything other than `QoS::AtMostOnce` then this will wait until the broker
-    /// has confirmed that it has received the message.
-    pub async fn publish<T: AsRef<str>, P: AsRef<[u8]> + ?Sized>(
+    async fn publish_packet(
         &self,
-        topic: &Topic<T>,
-        payload: &P,
+        topic_name: &str,
+        payload: &[u8],
         qos: QoS,
     ) -> Result<(), Error> {
         let mut subscriber = subscribe().await;
 
-        let mut topic_str = TopicString::new();
-        if topic
-            .to_string(self.device_type, self.device_id, &mut topic_str)
-            .is_err()
-        {
-            return Err(Error::TooLarge);
-        }
-
         let (qospid, pid) = match qos {
             QoS::AtMostOnce => (QosPid::AtMostOnce, None),
             QoS::AtLeastOnce => {
-                let pid = self.assign_pid();
+                let pid = assign_pid();
                 (QosPid::AtLeastOnce(pid), Some(pid))
             }
             QoS::ExactlyOnce => {
-                let pid = self.assign_pid();
+                let pid = assign_pid();
                 (QosPid::ExactlyOnce(pid), Some(pid))
             }
         };
@@ -575,8 +628,8 @@ impl<'d> Mcutie<'d> {
             dup: false,
             qospid,
             retain: false,
-            topic_name: &topic_str,
-            payload: payload.as_ref(),
+            topic_name,
+            payload,
         });
 
         send_packet(packet).await?;
@@ -610,9 +663,45 @@ impl<'d> Mcutie<'d> {
         }
     }
 
+    pub async fn publish<P: Publishable>(&self, data: &P, qos: QoS) -> Result<(), Error> {
+        let mut topic_str = TopicString::new();
+        if data.write_topic(&mut topic_str).is_err() {
+            return Err(Error::PacketError);
+        }
+
+        let mut buffer = Payload::new();
+        if data.write_payload(&mut buffer).is_err() {
+            return Err(Error::PacketError);
+        }
+
+        self.publish_packet(&topic_str, buffer.as_ref(), qos).await
+    }
+
+    /// Publishes a slice of data to the MQTT broker.
+    ///
+    /// If the level is anything other than `QoS::AtMostOnce` then this will wait until the broker
+    /// has confirmed that it has received the message.
+    pub async fn publish_data<T, P>(
+        &self,
+        topic: &Topic<T>,
+        payload: &P,
+        qos: QoS,
+    ) -> Result<(), Error>
+    where
+        T: Deref<Target = str>,
+        P: AsRef<[u8]> + ?Sized,
+    {
+        let mut topic_str = TopicString::new();
+        if topic.to_string(&mut topic_str).is_err() {
+            return Err(Error::TooLarge);
+        }
+
+        self.publish_packet(&topic_str, payload.as_ref(), qos).await
+    }
+
     /// Subscribes to a topic. If `wait_for_ack` is true then this will wait until confirmation is
     /// received from the broker before returning.
-    pub async fn subscribe<T: AsRef<str>>(
+    pub async fn subscribe<T: Deref<Target = str>>(
         &self,
         topic: &Topic<T>,
         wait_for_ack: bool,
@@ -620,14 +709,11 @@ impl<'d> Mcutie<'d> {
         let mut subscriber = subscribe().await;
 
         let mut topic_path = TopicString::new();
-        if topic
-            .to_string(self.device_type, self.device_id, &mut topic_path)
-            .is_err()
-        {
+        if topic.to_string(&mut topic_path).is_err() {
             return Err(Error::TooLarge);
         }
 
-        let pid = self.assign_pid();
+        let pid = assign_pid();
 
         let subscribe_topic = SubscribeTopic {
             topic_path,
@@ -681,7 +767,7 @@ impl<'d> Mcutie<'d> {
 
     /// Unsubscribes from a topic. If `wait_for_ack` is true then this will wait until confirmation is
     /// received from the broker before returning.
-    pub async fn unsubscribe<T: AsRef<str>>(
+    pub async fn unsubscribe<T: Deref<Target = str>>(
         &self,
         topic: &Topic<T>,
         wait_for_ack: bool,
@@ -689,14 +775,11 @@ impl<'d> Mcutie<'d> {
         let mut subscriber = subscribe().await;
 
         let mut topic_path = TopicString::new();
-        if topic
-            .to_string(self.device_type, self.device_id, &mut topic_path)
-            .is_err()
-        {
+        if topic.to_string(&mut topic_path).is_err() {
             return Err(Error::TooLarge);
         }
 
-        let pid = self.assign_pid();
+        let pid = assign_pid();
 
         let topics = match Vec::<TopicString, 5>::from_slice(&[topic_path]) {
             Ok(t) => t,
@@ -737,43 +820,120 @@ impl<'d> Mcutie<'d> {
     }
 }
 
-/// Initialises the MQTT stack returning a struct that can be used to send and receive messages and
-/// a future that must be run in order for the stack to operate.
-///
-/// `broker` may be an IP address or a DNS name for the broker to connect to. The task will loop
-/// forever attempting to stay connected.
-///
-/// `device_type` is expected to be the same for all devices of the same type while `device_id` is
-/// expected to be unique. Together they are used to form device specific topics and when used
-/// as part of the Home Assistant discovery data.
-///
-/// `last_will` allows you to publish some data to subscribers if the connection to the broker is
-/// lost.
-pub fn init<'t, T>(
+/// A builder to configure the MQTT stack.
+pub struct McutieBuilder<'t, T, L, const S: usize>
+where
+    T: Deref<Target = str> + 't,
+    L: Publishable + 't,
+{
     network: Stack<'t>,
     device_type: &'t str,
-    device_id: &'t str,
+    device_id: Option<&'t str>,
     broker: &'t str,
-    last_will: Option<(Topic<T>, Payload)>,
+    last_will: Option<L>,
     username: Option<&'t str>,
     password: Option<&'t str>,
-) -> (Mcutie<'t>, McutieTask<'t, T>)
-where
-    T: AsRef<str> + 't,
-{
-    (
-        Mcutie {
-            device_type,
-            device_id,
-        },
-        McutieTask {
+    subscriptions: [Topic<T>; S],
+}
+
+impl<'t, T: Deref<Target = str> + 't, L: Publishable + 't> McutieBuilder<'t, T, L, 0> {
+    /// Creates a new builder with the initial required configuration.
+    ///
+    /// `device_type` is expected to be the same for all devices of the same type.
+    /// `broker` may be an IP address or a DNS name for the broker to connect to.
+    pub fn new(network: Stack<'t>, device_type: &'t str, broker: &'t str) -> Self {
+        Self {
             network,
             device_type,
-            device_id,
             broker,
-            last_will,
-            username,
-            password,
-        },
-    )
+            device_id: None,
+            last_will: None,
+            username: None,
+            password: None,
+            subscriptions: [],
+        }
+    }
+}
+
+impl<'t, T: Deref<Target = str> + 't, L: Publishable + 't, const S: usize>
+    McutieBuilder<'t, T, L, S>
+{
+    /// Add some default topics to subscribe to.
+    pub fn with_subscriptions<const N: usize>(
+        self,
+        subscriptions: [Topic<T>; N],
+    ) -> McutieBuilder<'t, T, L, N> {
+        McutieBuilder {
+            network: self.network,
+            device_type: self.device_type,
+            broker: self.broker,
+            device_id: self.device_id,
+            last_will: self.last_will,
+            username: self.username,
+            password: self.password,
+            subscriptions,
+        }
+    }
+}
+
+impl<'t, T: Deref<Target = str> + 't, L: Publishable + 't, const S: usize>
+    McutieBuilder<'t, T, L, S>
+{
+    /// Adds authentication for the broker.
+    pub fn with_authentication(self, username: &'t str, password: &'t str) -> Self {
+        Self {
+            username: Some(username),
+            password: Some(password),
+            ..self
+        }
+    }
+
+    /// Sets a last will message to be published in the event of disconnection.
+    pub fn with_last_will(self, last_will: L) -> Self {
+        Self {
+            last_will: Some(last_will),
+            ..self
+        }
+    }
+
+    /// Sets a custom unique device identifier. If none is set then the network
+    /// MAC address is used.
+    pub fn with_device_id(self, device_id: &'t str) -> Self {
+        Self {
+            device_id: Some(device_id),
+            ..self
+        }
+    }
+
+    /// Initialises the MQTT stack returning a struct that can be used to send
+    /// and receive messages and a future that must be run in order for the
+    /// stack to operate.
+    pub fn build(self) -> (Mcutie, McutieTask<'t, T, L, S>) {
+        let mut dtype = String::<32>::new();
+        dtype.push_str(self.device_type).unwrap();
+        DEVICE_TYPE.set(dtype).unwrap();
+
+        let mut did = String::<32>::new();
+        if let Some(device_id) = self.device_id {
+            did.push_str(device_id).unwrap();
+        } else if let HardwareAddress::Ethernet(address) = self.network.hardware_address() {
+            let mut buffer = [0_u8; 12];
+            hex::encode_to_slice(address.as_bytes(), &mut buffer).unwrap();
+            did.push_str(str::from_utf8(&buffer).unwrap()).unwrap();
+        }
+
+        DEVICE_ID.set(did).unwrap();
+
+        (
+            Mcutie {},
+            McutieTask {
+                network: self.network,
+                broker: self.broker,
+                last_will: self.last_will,
+                username: self.username,
+                password: self.password,
+                subscriptions: self.subscriptions,
+            },
+        )
+    }
 }

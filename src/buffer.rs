@@ -46,6 +46,17 @@ impl<const N: usize> Buffer<N> {
         Ok(())
     }
 
+    #[cfg(feature = "homeassistant")]
+    pub fn serialize_json<T: serde::Serialize>(
+        &mut self,
+        value: &T,
+    ) -> Result<(), serde_json_core::ser::Error> {
+        let len = serde_json_core::to_slice(value, &mut self.bytes[self.cursor..])?;
+        self.cursor += len;
+
+        Ok(())
+    }
+
     /// The number of bytes available for writing into this buffer.
     pub fn available(&self) -> usize {
         N - self.cursor
