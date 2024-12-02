@@ -6,8 +6,8 @@ use serde::{
 };
 
 use crate::{
-    device_id, device_type, Mcutie, McutieTask, MqttMessage, Payload, Publishable, Topic,
-    TopicString, DATA_CHANNEL,
+    device_id, device_type, McutieTask, MqttMessage, Payload, Publishable, Topic, TopicString,
+    DATA_CHANNEL,
 };
 
 const HA_STATUS_TOPIC: Topic<&'static str> = Topic::General("homeassistant/status");
@@ -23,8 +23,7 @@ where
     L: Publishable + 't,
 {
     pub(super) async fn ha_after_connected(&self) {
-        let mcutie = Mcutie {};
-        let _ = mcutie.subscribe(&HA_STATUS_TOPIC, false).await;
+        let _ = HA_STATUS_TOPIC.subscribe(false).await;
     }
 
     pub(super) async fn ha_handle_update(
