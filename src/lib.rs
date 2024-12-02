@@ -1,30 +1,26 @@
 #![no_std]
 #![doc = include_str!("../README.md")]
+#![deny(unreachable_pub)]
 
-use core::{fmt::Display, ops::Deref, str};
+use core::{ops::Deref, str};
 
-use embassy_futures::select::{select, Either};
 use embassy_net::{HardwareAddress, Stack};
-use embassy_sync::{
-    blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel, pubsub::WaitResult,
-};
-use embassy_time::Timer;
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
 use heapless::String;
 pub use mqttrs::QoS;
-use mqttrs::{Packet, Pid, Publish, QosPid, SubscribeReturnCodes};
+use mqttrs::{Pid, SubscribeReturnCodes};
 use once_cell::sync::OnceCell;
 
 pub use buffer::Buffer;
-use io::send_packet;
 pub use io::McutieTask;
+pub use publish::*;
 pub use topic::Topic;
-
-use crate::io::{assign_pid, subscribe};
 
 mod buffer;
 #[cfg(feature = "homeassistant")]
 pub mod homeassistant;
 mod io;
+mod publish;
 mod topic;
 
 // This really needs to match that used by mqttrs.
@@ -83,146 +79,11 @@ enum ControlMessage {
     Unsubscribed(Pid),
 }
 
-pub trait Publishable {
-    type TopicError;
-    type PayloadError;
+pub struct McutieReceiver;
 
-    fn write_topic(&self, topic: &mut TopicString) -> Result<(), Self::TopicError>;
-
-    fn write_payload(&self, payload: &mut Payload) -> Result<(), Self::PayloadError>;
-}
-
-pub struct State<T: Deref<Target = str>, S: Display> {
-    pub topic: Topic<T>,
-    pub state: S,
-}
-
-impl<T: Deref<Target = str>, S: Display> Publishable for State<T, S> {
-    type TopicError = ();
-    type PayloadError = core::fmt::Error;
-
-    fn write_topic(&self, topic: &mut TopicString) -> Result<(), Self::TopicError> {
-        self.topic.to_string(topic)
-    }
-
-    fn write_payload(&self, payload: &mut Payload) -> Result<(), Self::PayloadError> {
-        use core::fmt::Write;
-
-        write!(payload, "{}", self.state)
-    }
-}
-
-pub struct Receiver;
-
-impl Receiver {
+impl McutieReceiver {
     pub async fn receive(&self) -> MqttMessage {
         DATA_CHANNEL.receive().await
-    }
-}
-
-#[derive(Clone)]
-pub struct Mcutie {}
-
-impl Mcutie {
-    /// A receiver for messages about state and publications from the broker. While you can obtain
-    /// multiple receivers only one will receive a message.
-    pub fn receiver(&self) -> Receiver {
-        Receiver
-    }
-
-    async fn publish_packet(
-        &self,
-        topic_name: &str,
-        payload: &[u8],
-        qos: QoS,
-    ) -> Result<(), Error> {
-        let mut subscriber = subscribe().await;
-
-        let (qospid, pid) = match qos {
-            QoS::AtMostOnce => (QosPid::AtMostOnce, None),
-            QoS::AtLeastOnce => {
-                let pid = assign_pid();
-                (QosPid::AtLeastOnce(pid), Some(pid))
-            }
-            QoS::ExactlyOnce => {
-                let pid = assign_pid();
-                (QosPid::ExactlyOnce(pid), Some(pid))
-            }
-        };
-
-        let packet = Packet::Publish(Publish {
-            dup: false,
-            qospid,
-            retain: false,
-            topic_name,
-            payload,
-        });
-
-        send_packet(packet).await?;
-
-        if let Some(expected_pid) = pid {
-            match select(
-                async {
-                    loop {
-                        match subscriber.next_message().await {
-                            WaitResult::Lagged(_) => {
-                                // Maybe we missed the message?
-                            }
-                            WaitResult::Message(ControlMessage::Published(published_pid)) => {
-                                if published_pid == expected_pid {
-                                    return Ok(());
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                },
-                Timer::after_millis(CONFIRMATION_TIMEOUT),
-            )
-            .await
-            {
-                Either::First(r) => r,
-                Either::Second(_) => Err(Error::TimedOut),
-            }
-        } else {
-            Ok(())
-        }
-    }
-
-    pub async fn publish<P: Publishable>(&self, data: &P, qos: QoS) -> Result<(), Error> {
-        let mut topic_str = TopicString::new();
-        if data.write_topic(&mut topic_str).is_err() {
-            return Err(Error::PacketError);
-        }
-
-        let mut buffer = Payload::new();
-        if data.write_payload(&mut buffer).is_err() {
-            return Err(Error::PacketError);
-        }
-
-        self.publish_packet(&topic_str, buffer.as_ref(), qos).await
-    }
-
-    /// Publishes a slice of data to the MQTT broker.
-    ///
-    /// If the level is anything other than `QoS::AtMostOnce` then this will wait until the broker
-    /// has confirmed that it has received the message.
-    pub async fn publish_data<T, P>(
-        &self,
-        topic: &Topic<T>,
-        payload: &P,
-        qos: QoS,
-    ) -> Result<(), Error>
-    where
-        T: Deref<Target = str>,
-        P: AsRef<[u8]> + ?Sized,
-    {
-        let mut topic_str = TopicString::new();
-        if topic.to_string(&mut topic_str).is_err() {
-            return Err(Error::TooLarge);
-        }
-
-        self.publish_packet(&topic_str, payload.as_ref(), qos).await
     }
 }
 
@@ -311,10 +172,10 @@ impl<'t, T: Deref<Target = str> + 't, L: Publishable + 't, const S: usize>
         }
     }
 
-    /// Initialises the MQTT stack returning a struct that can be used to send
-    /// and receive messages and a future that must be run in order for the
+    /// Initialises the MQTT stack returning a receiver for listening to
+    /// messages from the broker and a future that must be run in order for the
     /// stack to operate.
-    pub fn build(self) -> (Mcutie, McutieTask<'t, T, L, S>) {
+    pub fn build(self) -> (McutieReceiver, McutieTask<'t, T, L, S>) {
         let mut dtype = String::<32>::new();
         dtype.push_str(self.device_type).unwrap();
         DEVICE_TYPE.set(dtype).unwrap();
@@ -331,7 +192,7 @@ impl<'t, T: Deref<Target = str> + 't, L: Publishable + 't, const S: usize>
         DEVICE_ID.set(did).unwrap();
 
         (
-            Mcutie {},
+            McutieReceiver {},
             McutieTask {
                 network: self.network,
                 broker: self.broker,

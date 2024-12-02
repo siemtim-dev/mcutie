@@ -1,17 +1,18 @@
-use core::{fmt::Display, ops::Deref};
+use core::ops::Deref;
 
 use serde::{
-    ser::{SerializeSeq, SerializeStruct},
+    ser::{Error as _, SerializeSeq, SerializeStruct},
     Serialize, Serializer,
 };
 
 use crate::{
-    device_id, device_type, McutieTask, MqttMessage, Payload, Publishable, Topic, TopicString,
-    DATA_CHANNEL,
+    device_id, device_type, Error, McutieTask, MqttMessage, Payload, Publishable, Topic,
+    TopicString, DATA_CHANNEL,
 };
 
 const HA_STATUS_TOPIC: Topic<&'static str> = Topic::General("homeassistant/status");
 const STATE_ONLINE: &str = "online";
+const STATE_OFFLINE: &str = "offline";
 
 pub trait Component: Serialize {
     fn platform() -> &'static str;
@@ -49,7 +50,8 @@ impl<T: Deref<Target = str>> Serialize for Topic<T> {
         S: serde::Serializer,
     {
         let mut topic = TopicString::new();
-        self.to_string(&mut topic).unwrap();
+        self.to_string(&mut topic)
+            .map_err(|_| S::Error::custom("topic was too large to serialize"))?;
         serializer.serialize_str(&topic)
     }
 }
@@ -125,20 +127,21 @@ pub struct Discovery<'a, const A: usize, C: Component> {
 }
 
 impl<'a, const A: usize, C: Component> Publishable for Discovery<'a, A, C> {
-    type TopicError = ();
-    type PayloadError = serde_json_core::ser::Error;
-
-    fn write_topic(&self, topic: &mut TopicString) -> Result<(), Self::TopicError> {
-        topic.push_str(option_env!("HA_DISCOVERY_PREFIX").unwrap_or("homeassistant"))?;
-        topic.push('/')?;
-        topic.push_str(C::platform())?;
-        topic.push('/')?;
-        topic.push_str(self.object_id)?;
-        topic.push_str("/config")
+    fn write_topic(&self, topic: &mut TopicString) -> Result<(), Error> {
+        topic
+            .push_str(option_env!("HA_DISCOVERY_PREFIX").unwrap_or("homeassistant"))
+            .map_err(|_| Error::TooLarge)?;
+        topic.push('/').map_err(|_| Error::TooLarge)?;
+        topic.push_str(C::platform()).map_err(|_| Error::TooLarge)?;
+        topic.push('/').map_err(|_| Error::TooLarge)?;
+        topic
+            .push_str(self.object_id)
+            .map_err(|_| Error::TooLarge)?;
+        topic.push_str("/config").map_err(|_| Error::TooLarge)
     }
 
-    fn write_payload(&self, payload: &mut crate::Payload) -> Result<(), Self::PayloadError> {
-        payload.serialize_json(self)
+    fn write_payload(&self, payload: &mut crate::Payload) -> Result<(), Error> {
+        payload.serialize_json(self).map_err(|_| Error::TooLarge)
     }
 }
 
@@ -155,11 +158,11 @@ pub enum AvailabilityState {
     Offline,
 }
 
-impl Display for AvailabilityState {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+impl AsRef<[u8]> for AvailabilityState {
+    fn as_ref(&self) -> &'static [u8] {
         match self {
-            Self::Online => write!(f, "online"),
-            Self::Offline => write!(f, "offline"),
+            Self::Online => STATE_ONLINE.as_bytes(),
+            Self::Offline => STATE_OFFLINE.as_bytes(),
         }
     }
 }

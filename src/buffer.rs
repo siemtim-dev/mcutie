@@ -46,7 +46,7 @@ impl<const N: usize> Buffer<N> {
         Ok(())
     }
 
-    #[cfg(feature = "homeassistant")]
+    #[cfg(feature = "serde")]
     pub fn serialize_json<T: serde::Serialize>(
         &mut self,
         value: &T,

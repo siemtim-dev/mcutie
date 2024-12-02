@@ -1,4 +1,4 @@
-use core::ops::Deref;
+use core::{fmt::Display, ops::Deref};
 
 use embassy_futures::select::{select, Either};
 use embassy_sync::pubsub::WaitResult;
@@ -9,6 +9,7 @@ use mqttrs::{Packet, QoS, Subscribe, SubscribeReturnCodes, SubscribeTopic, Unsub
 use crate::{
     device_id, device_type,
     io::{assign_pid, send_packet, subscribe},
+    publish::{PublishBytes, PublishDisplay, PublishJson},
     ControlMessage, Error, TopicString, CONFIRMATION_TIMEOUT,
 };
 
@@ -65,22 +66,26 @@ impl Topic<TopicString> {
 }
 
 impl<T: Deref<Target = str>> Topic<T> {
-    pub(crate) fn to_string<const N: usize>(&self, result: &mut String<N>) -> Result<(), ()> {
+    pub(crate) fn to_string<const N: usize>(&self, result: &mut String<N>) -> Result<(), Error> {
         match self {
             Topic::Device(st) => {
-                result.push_str(device_type())?;
-                result.push_str("/")?;
-                result.push_str(device_id())?;
-                result.push_str("/")?;
-                result.push_str(st.as_ref())?;
+                result
+                    .push_str(device_type())
+                    .map_err(|_| Error::TooLarge)?;
+                result.push_str("/").map_err(|_| Error::TooLarge)?;
+                result.push_str(device_id()).map_err(|_| Error::TooLarge)?;
+                result.push_str("/").map_err(|_| Error::TooLarge)?;
+                result.push_str(st.as_ref()).map_err(|_| Error::TooLarge)?;
             }
             Topic::DeviceType(st) => {
-                result.push_str(device_type())?;
-                result.push_str("/")?;
-                result.push_str(st.as_ref())?;
+                result
+                    .push_str(device_type())
+                    .map_err(|_| Error::TooLarge)?;
+                result.push_str("/").map_err(|_| Error::TooLarge)?;
+                result.push_str(st.as_ref()).map_err(|_| Error::TooLarge)?;
             }
             Topic::General(st) => {
-                result.push_str(st.as_ref())?;
+                result.push_str(st.as_ref()).map_err(|_| Error::TooLarge)?;
             }
         }
 
@@ -94,6 +99,39 @@ impl<T: Deref<Target = str>> Topic<T> {
             Topic::DeviceType(st) => Topic::DeviceType(st.as_ref()),
             Topic::Device(st) => Topic::Device(st.as_ref()),
             Topic::General(st) => Topic::General(st.as_ref()),
+        }
+    }
+
+    /// Creates a publishable message with something that can return a reference
+    /// to the payload.
+    pub fn with_bytes<'a, B: AsRef<[u8]>>(&'a self, data: &'a B) -> PublishBytes<'a, T, B> {
+        PublishBytes {
+            topic: self,
+            data,
+            qos: QoS::AtMostOnce,
+            retain: false,
+        }
+    }
+
+    /// Creates a publishable message with something that implements [`Display`].
+    pub fn with_display<'a, D: Display>(&'a self, data: &'a D) -> PublishDisplay<'a, T, D> {
+        PublishDisplay {
+            topic: self,
+            data,
+            qos: QoS::AtMostOnce,
+            retain: false,
+        }
+    }
+
+    #[cfg(feature = "serde")]
+    /// Creates a publishable message with something that can be serialized to
+    /// JSON.
+    pub fn with_json<'a, D: serde::Serialize>(&'a self, data: &'a D) -> PublishJson<'a, T, D> {
+        PublishJson {
+            topic: self,
+            data,
+            qos: QoS::AtMostOnce,
+            retain: false,
         }
     }
 

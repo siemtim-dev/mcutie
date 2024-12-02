@@ -4,21 +4,23 @@ use core::{
 };
 
 use defmt::{debug, error, info, trace, warn, Debug2Format};
-use embassy_futures::select::select3;
+use embassy_futures::select::{select, select3, Either};
 use embassy_net::{dns::DnsQueryType, tcp::TcpReader, tcp::TcpSocket, tcp::TcpWriter, Stack};
 use embassy_sync::{
     blocking_mutex::raw::CriticalSectionRawMutex,
     mutex::Mutex,
-    pubsub::{PubSubChannel, Subscriber},
+    pubsub::{PubSubChannel, Subscriber, WaitResult},
     signal::Signal,
 };
 use embassy_time::Timer;
 use embedded_io_async::Write;
-use mqttrs::{decode_slice, Connect, ConnectReturnCode, LastWill, Packet, Pid, Protocol, QoS};
+use mqttrs::{
+    decode_slice, Connect, ConnectReturnCode, LastWill, Packet, Pid, Protocol, Publish, QoS, QosPid,
+};
 
 use crate::{
     device_id, Buffer, ControlMessage, Error, MqttMessage, Payload, Publishable, Topic,
-    TopicString, DATA_CHANNEL, DEFAULT_BACKOFF, RESET_BACKOFF,
+    TopicString, CONFIRMATION_TIMEOUT, DATA_CHANNEL, DEFAULT_BACKOFF, RESET_BACKOFF,
 };
 
 static WRITE_BUFFER: Mutex<CriticalSectionRawMutex, Buffer<4096>> = Mutex::new(Buffer::new());
@@ -28,8 +30,9 @@ static WRITE_COMPLETE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 pub(crate) static CONTROL_CHANNEL: PubSubChannel<CriticalSectionRawMutex, ControlMessage, 2, 5, 0> =
     PubSubChannel::new();
 
-pub(crate) async fn subscribe(
-) -> Subscriber<'static, CriticalSectionRawMutex, ControlMessage, 2, 5, 0> {
+type ControlSubscriber = Subscriber<'static, CriticalSectionRawMutex, ControlMessage, 2, 5, 0>;
+
+pub(crate) async fn subscribe() -> ControlSubscriber {
     loop {
         if let Ok(sub) = CONTROL_CHANNEL.subscriber() {
             return sub;
@@ -67,6 +70,72 @@ pub(crate) async fn send_packet(packet: Packet<'_>) -> Result<(), Error> {
                 }
             }
         }
+    }
+}
+
+pub(crate) async fn wait_for_publish(
+    mut subscriber: ControlSubscriber,
+    expected_pid: Pid,
+) -> Result<(), Error> {
+    match select(
+        async {
+            loop {
+                match subscriber.next_message().await {
+                    WaitResult::Lagged(_) => {
+                        // Maybe we missed the message?
+                    }
+                    WaitResult::Message(ControlMessage::Published(published_pid)) => {
+                        if published_pid == expected_pid {
+                            return Ok(());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        },
+        Timer::after_millis(CONFIRMATION_TIMEOUT),
+    )
+    .await
+    {
+        Either::First(r) => r,
+        Either::Second(_) => Err(Error::TimedOut),
+    }
+}
+
+pub(crate) async fn publish(
+    topic_name: &str,
+    payload: &[u8],
+    qos: QoS,
+    retain: bool,
+) -> Result<(), Error> {
+    let subscriber = subscribe().await;
+
+    let (qospid, pid) = match qos {
+        QoS::AtMostOnce => (QosPid::AtMostOnce, None),
+        QoS::AtLeastOnce => {
+            let pid = assign_pid();
+            (QosPid::AtLeastOnce(pid), Some(pid))
+        }
+        QoS::ExactlyOnce => {
+            let pid = assign_pid();
+            (QosPid::ExactlyOnce(pid), Some(pid))
+        }
+    };
+
+    let packet = Packet::Publish(Publish {
+        dup: false,
+        qospid,
+        retain,
+        topic_name,
+        payload,
+    });
+
+    send_packet(packet).await?;
+
+    if let Some(expected_pid) = pid {
+        wait_for_publish(subscriber, expected_pid).await
+    } else {
+        Ok(())
     }
 }
 
