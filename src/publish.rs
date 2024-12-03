@@ -47,7 +47,7 @@ pub struct PublishBytes<'a, T, B: AsRef<[u8]>> {
     pub(crate) retain: bool,
 }
 
-impl<'a, T, B: AsRef<[u8]>> PublishBytes<'a, T, B> {
+impl<T, B: AsRef<[u8]>> PublishBytes<'_, T, B> {
     /// Sets the QoS level for this message.
     pub fn qos(mut self, qos: QoS) -> Self {
         self.qos = qos;
@@ -96,7 +96,7 @@ pub struct PublishDisplay<'a, T, D: Display> {
     pub(crate) retain: bool,
 }
 
-impl<'a, T, D: Display> PublishDisplay<'a, T, D> {
+impl<T, D: Display> PublishDisplay<'_, T, D> {
     /// Sets the QoS level for this message.
     pub fn qos(mut self, qos: QoS) -> Self {
         self.qos = qos;
@@ -138,7 +138,7 @@ pub struct PublishJson<'a, T, D: Serialize> {
 }
 
 #[cfg(feature = "serde")]
-impl<'a, T, D: Serialize> PublishJson<'a, T, D> {
+impl<T, D: Serialize> PublishJson<'_, T, D> {
     /// Sets the QoS level for this message.
     pub fn qos(mut self, qos: QoS) -> Self {
         self.qos = qos;

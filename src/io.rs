@@ -5,7 +5,11 @@ use core::{
 
 use defmt::{debug, error, info, trace, warn, Debug2Format};
 use embassy_futures::select::{select, select3, Either};
-use embassy_net::{dns::DnsQueryType, tcp::TcpReader, tcp::TcpSocket, tcp::TcpWriter, Stack};
+use embassy_net::{
+    dns::DnsQueryType,
+    tcp::{TcpReader, TcpSocket, TcpWriter},
+    Stack,
+};
 use embassy_sync::{
     blocking_mutex::raw::CriticalSectionRawMutex,
     mutex::Mutex,
@@ -15,12 +19,32 @@ use embassy_sync::{
 use embassy_time::Timer;
 use embedded_io_async::Write;
 use mqttrs::{
-    decode_slice, Connect, ConnectReturnCode, LastWill, Packet, Pid, Protocol, Publish, QoS, QosPid,
+    decode_slice,
+    Connect,
+    ConnectReturnCode,
+    LastWill,
+    Packet,
+    Pid,
+    Protocol,
+    Publish,
+    QoS,
+    QosPid,
 };
 
 use crate::{
-    device_id, Buffer, ControlMessage, Error, MqttMessage, Payload, Publishable, Topic,
-    TopicString, CONFIRMATION_TIMEOUT, DATA_CHANNEL, DEFAULT_BACKOFF, RESET_BACKOFF,
+    device_id,
+    Buffer,
+    ControlMessage,
+    Error,
+    MqttMessage,
+    Payload,
+    Publishable,
+    Topic,
+    TopicString,
+    CONFIRMATION_TIMEOUT,
+    DATA_CHANNEL,
+    DEFAULT_BACKOFF,
+    RESET_BACKOFF,
 };
 
 static WRITE_BUFFER: Mutex<CriticalSectionRawMutex, Buffer<4096>> = Mutex::new(Buffer::new());

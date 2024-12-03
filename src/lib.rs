@@ -4,15 +4,14 @@
 
 use core::{ops::Deref, str};
 
+pub use buffer::Buffer;
 use embassy_net::{HardwareAddress, Stack};
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
 use heapless::String;
+pub use io::McutieTask;
 pub use mqttrs::QoS;
 use mqttrs::{Pid, SubscribeReturnCodes};
 use once_cell::sync::OnceCell;
-
-pub use buffer::Buffer;
-pub use io::McutieTask;
 pub use publish::*;
 pub use topic::Topic;
 

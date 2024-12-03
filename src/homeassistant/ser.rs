@@ -2,7 +2,8 @@ use core::ops::Deref;
 
 use serde::{
     ser::{SerializeSeq, SerializeStruct},
-    Serialize, Serializer,
+    Serialize,
+    Serializer,
 };
 
 use crate::{
@@ -25,7 +26,7 @@ impl<'a, const N: usize, T: Deref<Target = str>> AvailabilityTopicList<'a, T, N>
     }
 }
 
-impl<'a, T: Deref<Target = str>, const N: usize> Serialize for AvailabilityTopicList<'a, T, N> {
+impl<T: Deref<Target = str>, const N: usize> Serialize for AvailabilityTopicList<'_, T, N> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -72,8 +73,8 @@ pub(super) struct DiscoverySerializer<'a, const A: usize, C: Component, S: Seria
     pub(super) inner: S,
 }
 
-impl<'a, const A: usize, C: Component, S: Serializer> Serializer
-    for DiscoverySerializer<'a, A, C, S>
+impl<const A: usize, C: Component, S: Serializer> Serializer
+    for DiscoverySerializer<'_, A, C, S>
 {
     type Ok = S::Ok;
     type Error = S::Error;

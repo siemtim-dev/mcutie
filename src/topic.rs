@@ -7,10 +7,14 @@ use heapless::{String, Vec};
 use mqttrs::{Packet, QoS, Subscribe, SubscribeReturnCodes, SubscribeTopic, Unsubscribe};
 
 use crate::{
-    device_id, device_type,
+    device_id,
+    device_type,
     io::{assign_pid, send_packet, subscribe},
     publish::{PublishBytes, PublishDisplay, PublishJson},
-    ControlMessage, Error, TopicString, CONFIRMATION_TIMEOUT,
+    ControlMessage,
+    Error,
+    TopicString,
+    CONFIRMATION_TIMEOUT,
 };
 
 /// An MQTT topic that is optionally prefixed with the device type and unique ID.

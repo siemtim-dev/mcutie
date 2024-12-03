@@ -40,12 +40,23 @@ use core::{future::Future, ops::Deref};
 use mqttrs::QoS;
 use serde::{
     ser::{Error as _, SerializeStruct},
-    Serialize, Serializer,
+    Serialize,
+    Serializer,
 };
 
 use crate::{
-    device_id, device_type, homeassistant::ser::DiscoverySerializer, io::publish, Error,
-    McutieTask, MqttMessage, Payload, Publishable, Topic, TopicString, DATA_CHANNEL,
+    device_id,
+    device_type,
+    homeassistant::ser::DiscoverySerializer,
+    io::publish,
+    Error,
+    McutieTask,
+    MqttMessage,
+    Payload,
+    Publishable,
+    Topic,
+    TopicString,
+    DATA_CHANNEL,
 };
 
 pub mod binary_sensor;
@@ -126,7 +137,7 @@ pub struct Device<'a> {
     pub configuration_url: Option<&'a str>,
 }
 
-impl<'a> Device<'a> {
+impl Device<'_> {
     pub const fn new() -> Self {
         Self {
             name: None,
@@ -135,7 +146,7 @@ impl<'a> Device<'a> {
     }
 }
 
-impl<'a> Serialize for Device<'a> {
+impl Serialize for Device<'_> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
@@ -170,7 +181,7 @@ pub struct Origin<'a> {
     pub name: Option<&'a str>,
 }
 
-impl<'a> Origin<'a> {
+impl Origin<'_> {
     pub const fn new() -> Self {
         Self { name: None }
     }
@@ -253,7 +264,7 @@ pub enum AvailabilityTopics<'a, const A: usize> {
     Latest([Topic<&'a str>; A]),
 }
 
-impl<'a, const A: usize, C: Component> Serialize for Entity<'a, A, C> {
+impl<const A: usize, C: Component> Serialize for Entity<'_, A, C> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
