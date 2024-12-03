@@ -97,6 +97,7 @@ impl<const N: usize> embedded_io::Write for Buffer<N> {
             Err(SliceWriteError::Full)
         } else {
             self.bytes[self.cursor..self.cursor + writable].copy_from_slice(buf);
+            self.cursor += writable;
             Ok(writable)
         }
     }

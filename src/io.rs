@@ -272,7 +272,7 @@ where
                     }
 
                     match publish.qospid {
-                        mqttrs::QosPid::AtMostOnce => todo!(),
+                        mqttrs::QosPid::AtMostOnce => {}
                         mqttrs::QosPid::AtLeastOnce(pid) => {
                             send_packet(Packet::Puback(pid)).await?;
                         }
@@ -344,8 +344,8 @@ where
                     Some(LastWill {
                         topic: &last_will_topic,
                         message: &last_will_payload,
-                        qos: QoS::AtMostOnce,
-                        retain: false,
+                        qos: p.qos(),
+                        retain: p.retain(),
                     })
                 } else {
                     None

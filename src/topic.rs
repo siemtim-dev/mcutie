@@ -13,10 +13,22 @@ use crate::{
     ControlMessage, Error, TopicString, CONFIRMATION_TIMEOUT,
 };
 
-/// An MQTT topic that is optionally prefixed with the device type and unique ID. This allows the
-/// topic to be easily defined as a const before knowing what the device ID is.
-#[derive(Clone, Copy, Eq)]
-pub enum Topic<T: Deref<Target = str>> {
+/// An MQTT topic that is optionally prefixed with the device type and unique ID.
+/// Normally you will define all your application's topics as consts with static
+/// lifetimes.
+///
+/// A [`Topic`] is the main entry to publishing messages to the broker.
+///
+/// ```
+/// # use mcutie::{Publishable, Topic};
+/// const DEVICE_AVAILABILITY: Topic<&'static str> = Topic::Device("state");
+///
+/// async fn send_status(status: &'static str) {
+///   let _ = DEVICE_AVAILABILITY.with_bytes(status.as_bytes()).publish().await;
+/// }
+/// ```
+#[derive(Clone, Copy)]
+pub enum Topic<T> {
     /// A topic that is prefixed with the device type.
     DeviceType(T),
     /// A topic that is prefixed with the device type and unique ID.
@@ -25,13 +37,57 @@ pub enum Topic<T: Deref<Target = str>> {
     General(T),
 }
 
-impl<A: Deref<Target = str>, B: Deref<Target = str>> PartialEq<Topic<A>> for Topic<B> {
+impl<A, B> PartialEq<Topic<A>> for Topic<B>
+where
+    B: PartialEq<A>,
+{
     fn eq(&self, other: &Topic<A>) -> bool {
         match (self, other) {
-            (Topic::DeviceType(l0), Topic::DeviceType(r0)) => l0.deref() == r0.deref(),
-            (Topic::Device(l0), Topic::Device(r0)) => l0.deref() == r0.deref(),
-            (Topic::General(l0), Topic::General(r0)) => l0.deref() == r0.deref(),
+            (Topic::DeviceType(l0), Topic::DeviceType(r0)) => l0 == r0,
+            (Topic::Device(l0), Topic::Device(r0)) => l0 == r0,
+            (Topic::General(l0), Topic::General(r0)) => l0 == r0,
             _ => false,
+        }
+    }
+}
+
+impl<T> Topic<T> {
+    /// Creates a publishable message with something that can return a reference
+    /// to the payload in bytes.
+    ///
+    /// Defaults to non-retained with QoS of 0 (AtMostOnce).
+    pub fn with_bytes<B: AsRef<[u8]>>(&self, data: B) -> PublishBytes<'_, T, B> {
+        PublishBytes {
+            topic: self,
+            data,
+            qos: QoS::AtMostOnce,
+            retain: false,
+        }
+    }
+
+    /// Creates a publishable message with something that implements [`Display`].
+    ///
+    /// Defaults to non-retained with QoS of 0 (AtMostOnce).
+    pub fn with_display<D: Display>(&self, data: D) -> PublishDisplay<'_, T, D> {
+        PublishDisplay {
+            topic: self,
+            data,
+            qos: QoS::AtMostOnce,
+            retain: false,
+        }
+    }
+
+    #[cfg(feature = "serde")]
+    /// Creates a publishable message with something that can be serialized to
+    /// JSON.
+    ///
+    /// Defaults to non-retained with QoS of 0 (AtMostOnce).
+    pub fn with_json<D: serde::Serialize>(&self, data: D) -> PublishJson<'_, T, D> {
+        PublishJson {
+            topic: self,
+            data,
+            qos: QoS::AtMostOnce,
+            retain: false,
         }
     }
 }
@@ -93,45 +149,12 @@ impl<T: Deref<Target = str>> Topic<T> {
     }
 
     /// Converts to a topic containing an [`str`]. Particularly useful for converting from an owned
-    /// string for match patterns
+    /// string for match patterns.
     pub fn as_ref(&self) -> Topic<&str> {
         match self {
             Topic::DeviceType(st) => Topic::DeviceType(st.as_ref()),
             Topic::Device(st) => Topic::Device(st.as_ref()),
             Topic::General(st) => Topic::General(st.as_ref()),
-        }
-    }
-
-    /// Creates a publishable message with something that can return a reference
-    /// to the payload.
-    pub fn with_bytes<'a, B: AsRef<[u8]>>(&'a self, data: &'a B) -> PublishBytes<'a, T, B> {
-        PublishBytes {
-            topic: self,
-            data,
-            qos: QoS::AtMostOnce,
-            retain: false,
-        }
-    }
-
-    /// Creates a publishable message with something that implements [`Display`].
-    pub fn with_display<'a, D: Display>(&'a self, data: &'a D) -> PublishDisplay<'a, T, D> {
-        PublishDisplay {
-            topic: self,
-            data,
-            qos: QoS::AtMostOnce,
-            retain: false,
-        }
-    }
-
-    #[cfg(feature = "serde")]
-    /// Creates a publishable message with something that can be serialized to
-    /// JSON.
-    pub fn with_json<'a, D: serde::Serialize>(&'a self, data: &'a D) -> PublishJson<'a, T, D> {
-        PublishJson {
-            topic: self,
-            data,
-            qos: QoS::AtMostOnce,
-            retain: false,
         }
     }
 

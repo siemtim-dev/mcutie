@@ -27,7 +27,9 @@ mod topic;
 const TOPIC_LENGTH: usize = 256;
 const PAYLOAD_LENGTH: usize = 2048;
 
+/// A fixed length stack allocated string. The length is fixed by the mqttrs crate.
 pub type TopicString = String<TOPIC_LENGTH>;
+/// A fixed length buffer of 2048 bytes.
 pub type Payload = Buffer<PAYLOAD_LENGTH>;
 
 // By default in the event of an error connecting to the broker we will wait for 5s.
@@ -51,6 +53,7 @@ fn device_type() -> &'static str {
 }
 
 /// Various errors
+#[derive(Debug)]
 pub enum Error {
     IOError,
     TimedOut,
@@ -59,6 +62,7 @@ pub enum Error {
 }
 
 #[allow(clippy::large_enum_variant)]
+/// A message from the MQTT broker.
 pub enum MqttMessage {
     /// The broker has been connected to successfully. Generally in response to this message a
     /// device should subscribe to topics of interest and send out any device state.
@@ -79,6 +83,7 @@ enum ControlMessage {
     Unsubscribed(Pid),
 }
 
+/// Receives messages from the broker.
 pub struct McutieReceiver;
 
 impl McutieReceiver {
