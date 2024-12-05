@@ -208,7 +208,7 @@ pub struct Entity<'a, const A: usize, C: Component> {
     pub component: C,
 }
 
-impl<'a, const A: usize, C: Component> Entity<'a, A, C> {
+impl<const A: usize, C: Component> Entity<'_, A, C> {
     /// Publishes the discovery message for this entity to the broker.
     pub async fn publish_discovery(&self) -> Result<(), Error> {
         let mut topic = TopicString::new();

@@ -79,7 +79,7 @@ pub struct Sensor<'u> {
     pub unit_of_measurement: Option<&'u str>,
 }
 
-impl<'u> Component for Sensor<'u> {
+impl Component for Sensor<'_> {
     type State = f32;
 
     fn platform() -> &'static str {
