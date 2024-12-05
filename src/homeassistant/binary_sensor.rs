@@ -1,15 +1,35 @@
 //! Tools for publishing a [Home Assistant binary sensor](https://www.home-assistant.io/integrations/binary_sensor.mqtt/).
 use core::ops::Deref;
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::{homeassistant::Component, Error, Publishable, Topic};
 
 /// The state of the sensor. Can be easily converted to or from a [`bool`].
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "&str", into = "&'static str")]
 pub enum BinarySensorState {
     On,
     Off,
+}
+
+impl From<BinarySensorState> for &'static str {
+    fn from(state: BinarySensorState) -> Self {
+        match state {
+            BinarySensorState::On => "ON",
+            BinarySensorState::Off => "OFF",
+        }
+    }
+}
+
+impl<'a> From<&'a str> for BinarySensorState {
+    fn from(st: &'a str) -> Self {
+        if st == "ON" {
+            Self::On
+        } else {
+            Self::Off
+        }
+    }
 }
 
 impl From<bool> for BinarySensorState {

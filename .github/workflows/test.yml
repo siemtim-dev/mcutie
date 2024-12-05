@@ -38,7 +38,10 @@ jobs:
         run: cargo check --no-default-features --features serde
 
       - name: Cargo check homeassistant
-        run: cargo check --no-default-features --features homeassistant
+        run: cargo check --no-default-features --features homeassistant,defmt
+
+      - name: Cargo check homeassistant
+        run: cargo check --no-default-features --features homeassistant,log
 
       - name: Run tests
         run: cargo test

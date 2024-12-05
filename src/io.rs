@@ -1,9 +1,6 @@
-use core::{
-    ops::Deref,
-    sync::atomic::{AtomicU16, Ordering},
-};
+use core::ops::Deref;
 
-use defmt::{debug, error, info, trace, warn, Debug2Format};
+use crate::fmt::Debug2Format;
 use embassy_futures::select::{select, select3, Either};
 use embassy_net::{
     dns::DnsQueryType,
@@ -19,33 +16,15 @@ use embassy_sync::{
 use embassy_time::Timer;
 use embedded_io_async::Write;
 use mqttrs::{
-    decode_slice,
-    Connect,
-    ConnectReturnCode,
-    LastWill,
-    Packet,
-    Pid,
-    Protocol,
-    Publish,
-    QoS,
-    QosPid,
+    decode_slice, Connect, ConnectReturnCode, LastWill, Packet, Pid, Protocol, Publish, QoS, QosPid,
 };
 
 use crate::{
-    device_id,
-    Buffer,
-    ControlMessage,
-    Error,
-    MqttMessage,
-    Payload,
-    Publishable,
-    Topic,
-    TopicString,
-    CONFIRMATION_TIMEOUT,
-    DATA_CHANNEL,
-    DEFAULT_BACKOFF,
-    RESET_BACKOFF,
+    device_id, Buffer, ControlMessage, Error, MqttMessage, Payload, Publishable, Topic,
+    TopicString, CONFIRMATION_TIMEOUT, DATA_CHANNEL, DEFAULT_BACKOFF, RESET_BACKOFF,
 };
+
+pub(crate) use atomic16::assign_pid;
 
 static WRITE_BUFFER: Mutex<CriticalSectionRawMutex, Buffer<4096>> = Mutex::new(Buffer::new());
 static WRITE_PENDING: Signal<CriticalSectionRawMutex, ()> = Signal::new();
@@ -66,10 +45,32 @@ pub(crate) async fn subscribe() -> ControlSubscriber {
     }
 }
 
-static PID: AtomicU16 = AtomicU16::new(0);
+#[cfg(target_has_atomic = "16")]
+mod atomic16 {
+    use core::sync::atomic::{AtomicU16, Ordering};
 
-pub(crate) fn assign_pid() -> Pid {
-    Pid::new() + PID.fetch_add(1, Ordering::SeqCst)
+    use mqttrs::Pid;
+
+    static PID: AtomicU16 = AtomicU16::new(0);
+
+    pub(crate) async fn assign_pid() -> Pid {
+        Pid::new() + PID.fetch_add(1, Ordering::SeqCst)
+    }
+}
+
+#[cfg(not(target_has_atomic = "16"))]
+mod atomic16 {
+    use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex};
+    use mqttrs::Pid;
+
+    static PID_MUTEX: Mutex<CriticalSectionRawMutex, u16> = Mutex::new(0);
+
+    pub(crate) async fn assign_pid() -> Pid {
+        let mut locked = PID_MUTEX.lock().await;
+        *locked += 1;
+
+        Pid::new() + *locked
+    }
 }
 
 pub(crate) async fn send_packet(packet: Packet<'_>) -> Result<(), Error> {
@@ -137,11 +138,11 @@ pub(crate) async fn publish(
     let (qospid, pid) = match qos {
         QoS::AtMostOnce => (QosPid::AtMostOnce, None),
         QoS::AtLeastOnce => {
-            let pid = assign_pid();
+            let pid = assign_pid().await;
             (QosPid::AtLeastOnce(pid), Some(pid))
         }
         QoS::ExactlyOnce => {
-            let pid = assign_pid();
+            let pid = assign_pid().await;
             (QosPid::ExactlyOnce(pid), Some(pid))
         }
     };
@@ -255,7 +256,7 @@ where
             };
 
             trace!(
-                "Received packet from broker: {}",
+                "Received packet from broker: {:?}",
                 Debug2Format(&packet.get_type())
             );
 
@@ -335,7 +336,7 @@ where
                 | Packet::Unsubscribe(_)
                 | Packet::Disconnect => {
                     debug!(
-                        "Unexpected packet from broker: {}",
+                        "Unexpected packet from broker: {:?}",
                         Debug2Format(&packet.get_type())
                     );
                 }
@@ -394,7 +395,7 @@ where
             }
 
             if let Err(e) = writer.write_all(&buffer).await {
-                error!("Failed to send connection packet: {}", e);
+                error!("Failed to send connection packet: {:?}", e);
                 return;
             }
 
@@ -413,7 +414,7 @@ where
                 trace!("Writer locked data");
 
                 if let Err(e) = writer.write_all(&buffer).await {
-                    error!("Failed to send data: {}", e);
+                    error!("Failed to send data: {:?}", e);
                     return;
                 }
 
@@ -446,7 +447,7 @@ where
             let ip_addrs = match self.network.dns_query(self.broker, DnsQueryType::A).await {
                 Ok(v) => v,
                 Err(e) => {
-                    error!("Failed to lookup '{}' for broker: {}", self.broker, e);
+                    error!("Failed to lookup '{}' for broker: {:?}", self.broker, e);
                     continue;
                 }
             };
@@ -463,7 +464,7 @@ where
 
             let mut socket = TcpSocket::new(self.network, &mut rx_buffer, &mut tx_buffer);
             if let Err(e) = socket.connect((ip, 1883)).await {
-                error!("Failed to connect to {}:1883: {}", ip, e);
+                error!("Failed to connect to {}:1883: {:?}", ip, e);
                 continue;
             }
 

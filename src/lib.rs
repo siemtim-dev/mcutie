@@ -15,6 +15,8 @@ use once_cell::sync::OnceCell;
 pub use publish::*;
 pub use topic::Topic;
 
+pub(crate) mod fmt;
+
 mod buffer;
 #[cfg(feature = "homeassistant")]
 pub mod homeassistant;

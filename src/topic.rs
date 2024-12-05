@@ -9,14 +9,10 @@ use mqttrs::{Packet, QoS, Subscribe, SubscribeReturnCodes, SubscribeTopic, Unsub
 #[cfg(feature = "serde")]
 use crate::publish::PublishJson;
 use crate::{
-    device_id,
-    device_type,
+    device_id, device_type,
     io::{assign_pid, send_packet, subscribe},
     publish::{PublishBytes, PublishDisplay},
-    ControlMessage,
-    Error,
-    TopicString,
-    CONFIRMATION_TIMEOUT,
+    ControlMessage, Error, TopicString, CONFIRMATION_TIMEOUT,
 };
 
 /// An MQTT topic that is optionally prefixed with the device type and unique ID.
@@ -174,7 +170,7 @@ impl<T: Deref<Target = str>> Topic<T> {
             return Err(Error::TooLarge);
         }
 
-        let pid = assign_pid();
+        let pid = assign_pid().await;
 
         let subscribe_topic = SubscribeTopic {
             topic_path,
@@ -237,7 +233,7 @@ impl<T: Deref<Target = str>> Topic<T> {
             return Err(Error::TooLarge);
         }
 
-        let pid = assign_pid();
+        let pid = assign_pid().await;
 
         // The size of this vec must match that used by mqttrs.
         let topics = match Vec::<TopicString, 5>::from_slice(&[topic_path]) {

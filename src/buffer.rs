@@ -57,6 +57,15 @@ impl<const N: usize> Buffer<N> {
         Ok(())
     }
 
+    #[cfg(feature = "serde")]
+    pub fn deserialize_json<'a, T: serde::Deserialize<'a>>(
+        &'a self,
+    ) -> Result<T, serde_json_core::de::Error> {
+        let (result, _) = serde_json_core::from_slice(self)?;
+
+        Ok(result)
+    }
+
     /// The number of bytes available for writing into this buffer.
     pub fn available(&self) -> usize {
         N - self.cursor

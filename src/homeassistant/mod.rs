@@ -40,27 +40,16 @@ use core::{future::Future, ops::Deref};
 use mqttrs::QoS;
 use serde::{
     ser::{Error as _, SerializeStruct},
-    Serialize,
-    Serializer,
+    Serialize, Serializer,
 };
 
 use crate::{
-    device_id,
-    device_type,
-    homeassistant::ser::DiscoverySerializer,
-    io::publish,
-    Error,
-    McutieTask,
-    MqttMessage,
-    Payload,
-    Publishable,
-    Topic,
-    TopicString,
-    DATA_CHANNEL,
+    device_id, device_type, homeassistant::ser::DiscoverySerializer, io::publish, Error,
+    McutieTask, MqttMessage, Payload, Publishable, Topic, TopicString, DATA_CHANNEL,
 };
 
 pub mod binary_sensor;
-// pub mod light;
+pub mod light;
 pub mod sensor;
 mod ser;
 

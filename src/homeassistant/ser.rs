@@ -2,8 +2,7 @@ use core::ops::Deref;
 
 use serde::{
     ser::{SerializeSeq, SerializeStruct},
-    Serialize,
-    Serializer,
+    Serialize, Serializer,
 };
 
 use crate::{
@@ -43,30 +42,30 @@ impl<T: Deref<Target = str>, const N: usize> Serialize for AvailabilityTopicList
     }
 }
 
-// pub(super) struct List<'a, T: Serialize, const N: usize> {
-//     list: &'a [T; N],
-// }
+pub(super) struct List<'a, T: Serialize, const N: usize> {
+    list: &'a [T; N],
+}
 
-// impl<'a, T: Serialize, const N: usize> List<'a, T, N> {
-//     pub(super) fn new(list: &'a [T; N]) -> Self {
-//         Self { list }
-//     }
-// }
+impl<'a, T: Serialize, const N: usize> List<'a, T, N> {
+    pub(super) fn new(list: &'a [T; N]) -> Self {
+        Self { list }
+    }
+}
 
-// impl<'a, T: Serialize, const N: usize> Serialize for List<'a, T, N> {
-//     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-//     where
-//         S: Serializer,
-//     {
-//         let mut serializer = serializer.serialize_seq(Some(N))?;
+impl<T: Serialize, const N: usize> Serialize for List<'_, T, N> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut serializer = serializer.serialize_seq(Some(N))?;
 
-//         for item in self.list {
-//             serializer.serialize_element(item)?;
-//         }
+        for item in self.list {
+            serializer.serialize_element(item)?;
+        }
 
-//         serializer.end()
-//     }
-// }
+        serializer.end()
+    }
+}
 
 pub(super) struct DiscoverySerializer<'a, const A: usize, C: Component, S: Serializer> {
     pub(super) discovery: &'a Entity<'a, A, C>,
