@@ -31,8 +31,14 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cargo check
-        run: cargo check --all-features
+      - name: Cargo check basic
+        run: cargo check --no-default-features
+
+      - name: Cargo check serde
+        run: cargo check --no-default-features --features serde
+
+      - name: Cargo check homeassistant
+        run: cargo check --no-default-features --features homeassistant
 
       - name: Run tests
         run: cargo test

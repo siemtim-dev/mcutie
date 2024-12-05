@@ -2,7 +2,6 @@ use core::{fmt::Display, future::Future, ops::Deref};
 
 use embedded_io::Write;
 use mqttrs::QoS;
-use serde::Serialize;
 
 use crate::{io::publish, Error, Payload, Topic, TopicString};
 
@@ -130,7 +129,7 @@ impl<'a, T: Deref<Target = str> + 'a, D: Display> Publishable for PublishDisplay
 
 #[cfg(feature = "serde")]
 /// A [`Publishable`] with that serializes a JSON payload.
-pub struct PublishJson<'a, T, D: Serialize> {
+pub struct PublishJson<'a, T, D: serde::Serialize> {
     pub(crate) topic: &'a Topic<T>,
     pub(crate) data: D,
     pub(crate) qos: QoS,
@@ -138,7 +137,7 @@ pub struct PublishJson<'a, T, D: Serialize> {
 }
 
 #[cfg(feature = "serde")]
-impl<T, D: Serialize> PublishJson<'_, T, D> {
+impl<T, D: serde::Serialize> PublishJson<'_, T, D> {
     /// Sets the QoS level for this message.
     pub fn qos(mut self, qos: QoS) -> Self {
         self.qos = qos;
@@ -153,7 +152,7 @@ impl<T, D: Serialize> PublishJson<'_, T, D> {
 }
 
 #[cfg(feature = "serde")]
-impl<'a, T: Deref<Target = str> + 'a, D: Serialize> Publishable for PublishJson<'a, T, D> {
+impl<'a, T: Deref<Target = str> + 'a, D: serde::Serialize> Publishable for PublishJson<'a, T, D> {
     fn write_topic(&self, buffer: &mut TopicString) -> Result<(), Error> {
         self.topic.to_string(buffer)
     }
