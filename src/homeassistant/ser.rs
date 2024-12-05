@@ -73,9 +73,7 @@ pub(super) struct DiscoverySerializer<'a, const A: usize, C: Component, S: Seria
     pub(super) inner: S,
 }
 
-impl<const A: usize, C: Component, S: Serializer> Serializer
-    for DiscoverySerializer<'_, A, C, S>
-{
+impl<const A: usize, C: Component, S: Serializer> Serializer for DiscoverySerializer<'_, A, C, S> {
     type Ok = S::Ok;
     type Error = S::Error;
     type SerializeSeq = S::SerializeSeq;
