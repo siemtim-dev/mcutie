@@ -1,5 +1,9 @@
 # mcutie
 
+[![Tests](https://github.com/Mossop/mcutie/actions/workflows/test.yml/badge.svg)](https://github.com/Mossop/mcutie/actions/workflows/test.yml)
+[![Latest Version](https://img.shields.io/crates/v/mcutie.svg)](https://crates.io/crates/mcutie)
+[![Documentation](https://docs.rs/mcutie/badge.svg)](https://docs.rs/mcutie)
+
 A simple MQTT client designed for use in embedded devices using the `embassy-net` networking stack.
 Requires an async executor. Runs in `no-std` contexts and includes specific support for Home
 Assistant's device auto-discovery.
