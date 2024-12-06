@@ -1,5 +1,8 @@
 #![macro_use]
 
+#[cfg(all(feature = "defmt", feature = "log"))]
+compile_error!("The `defmt` and `log` features cannot both be enabled at the same time.");
+
 #[cfg(not(feature = "defmt"))]
 use core::fmt;
 

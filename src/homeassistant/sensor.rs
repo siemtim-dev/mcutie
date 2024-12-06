@@ -8,6 +8,7 @@ use crate::{homeassistant::Component, Error, Publishable, Topic};
 /// The type of sensor.
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
+#[allow(missing_docs)]
 pub enum SensorClass {
     ApparentPower,
     Aqi,
@@ -66,16 +67,22 @@ pub enum SensorClass {
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SensorStateClass {
+    /// A measurement at a singe point in time.
     Measurement,
+    /// A cumulative total that can increase or decrease over time.
     Total,
+    /// A cumulative total that can only increase.
     TotalIncreasing,
 }
 
 /// A binary sensor that can publish a [`f32`] value.
 #[derive(Serialize)]
 pub struct Sensor<'u> {
+    /// The type of sensor.
     pub device_class: Option<SensorClass>,
+    /// The type of measurement that this sensor reports.
     pub state_class: Option<SensorStateClass>,
+    /// The unit of measurement for this sensor.
     pub unit_of_measurement: Option<&'u str>,
 }
 

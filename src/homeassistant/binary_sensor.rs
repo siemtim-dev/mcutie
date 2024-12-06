@@ -8,6 +8,7 @@ use crate::{homeassistant::Component, Error, Publishable, Topic};
 /// The state of the sensor. Can be easily converted to or from a [`bool`].
 #[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(from = "&str", into = "&'static str")]
+#[allow(missing_docs)]
 pub enum BinarySensorState {
     On,
     Off,
@@ -63,6 +64,7 @@ impl AsRef<[u8]> for BinarySensorState {
 /// The type of sensor.
 #[derive(Serialize)]
 #[serde(rename_all = "snake_case")]
+#[allow(missing_docs)]
 pub enum BinarySensorClass {
     Battery,
     BatteryCharging,
@@ -97,6 +99,7 @@ pub enum BinarySensorClass {
 /// A binary sensor that can publish a [`BinarySensorState`] status.
 #[derive(Serialize)]
 pub struct BinarySensor {
+    /// The type of sensor
     pub device_class: Option<BinarySensorClass>,
 }
 

@@ -10,6 +10,7 @@ use crate::{
 
 #[derive(Serialize)]
 #[serde(rename_all = "lowercase")]
+#[allow(missing_docs)]
 pub enum SupportedColorMode {
     OnOff,
     Brightness,
@@ -46,7 +47,7 @@ struct SerializedColor {
 }
 
 #[derive(Deserialize)]
-pub struct LedPayload<'a> {
+struct LedPayload<'a> {
     state: BinarySensorState,
     #[serde(default)]
     brightness: Option<u8>,
@@ -58,8 +59,10 @@ pub struct LedPayload<'a> {
     effect: Option<&'a str>,
 }
 
+/// The color of the light in various forms.
 #[derive(Serialize)]
 #[serde(rename_all = "lowercase", tag = "color_mode", content = "color")]
+#[allow(missing_docs)]
 pub enum Color {
     None,
     Brightness(u8),
@@ -106,13 +109,19 @@ pub enum Color {
     },
 }
 
+/// The state of the light. This can be sent to the broker and received as a
+/// command from Home Assistant.
 pub struct LightState<'a> {
+    /// Whether the light is on or off.
     pub state: BinarySensorState,
+    /// The color of the light.
     pub color: Color,
+    /// Any effect that is applied.
     pub effect: Option<&'a str>,
 }
 
 impl<'a> LightState<'a> {
+    /// Parses the state from a command payload.
     pub fn from_payload(payload: &'a Payload) -> Result<Self, Error> {
         let parsed: LedPayload<'a> = match payload.deserialize_json() {
             Ok(p) => p,
@@ -312,9 +321,14 @@ impl Serialize for LightState<'_> {
     }
 }
 
+/// A light entity
 pub struct Light<'a, const C: usize, const E: usize> {
-    pub command_topic: Topic<&'a str>,
+    /// A command topic that Home Assistant can use to control the light.
+    /// It will be sent a [`LightState`] payload.
+    pub command_topic: Option<Topic<&'a str>>,
+    /// The color modes supported by the light.
     pub supported_color_modes: [SupportedColorMode; C],
+    /// Any effects that can be used.
     pub effects: [&'a str; E],
 }
 

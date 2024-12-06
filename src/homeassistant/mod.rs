@@ -62,8 +62,10 @@ pub trait Component: Serialize {
     /// The state to publish.
     type State;
 
+    /// The platform identifier for this entity. Internal.
     fn platform() -> &'static str;
 
+    /// Publishes this entity's state to the MQTT broker.
     fn publish_state<T: Deref<Target = str>>(
         &self,
         topic: &Topic<T>,
@@ -122,11 +124,15 @@ where
 /// automatically included.
 #[derive(Clone, Copy, Default)]
 pub struct Device<'a> {
+    /// A name to identify the device. If not provided the default device type is
+    /// used.
     pub name: Option<&'a str>,
+    /// An optional configuration URL for the device.
     pub configuration_url: Option<&'a str>,
 }
 
 impl Device<'_> {
+    /// Creates a new default device.
     pub const fn new() -> Self {
         Self {
             name: None,
@@ -166,11 +172,14 @@ impl Serialize for Device<'_> {
 /// included.
 #[derive(Clone, Copy, Default, Serialize)]
 pub struct Origin<'a> {
+    /// A name to identify the device's origin. If not provided the default
+    /// device type is used.
     #[serde(serialize_with = "name_or_device")]
     pub name: Option<&'a str>,
 }
 
 impl Origin<'_> {
+    /// Creates a new default origin.
     pub const fn new() -> Self {
         Self { name: None }
     }
@@ -183,10 +192,15 @@ impl Origin<'_> {
 /// [Home Assistant MQTT docs](https://www.home-assistant.io/integrations/mqtt/)
 /// for information on what some of these properties mean.
 pub struct Entity<'a, const A: usize, C: Component> {
+    /// The device this entity is a part of.
     pub device: Device<'a>,
+    /// The origin of the device.
     pub origin: Origin<'a>,
+    /// An object identifier to allow for entity ID customisation in Home Assistant.
     pub object_id: &'a str,
+    /// An optional unique identifier for the entity.
     pub unique_id: Option<&'a str>,
+    /// A friendly name for the entity.
     pub name: &'a str,
     /// Specifies the availability topics that Home Assistant will listen to to
     /// determine this entity's availability.
@@ -225,6 +239,7 @@ impl<const A: usize, C: Component> Entity<'_, A, C> {
 }
 
 /// A payload representing a device or entity's availability.
+#[allow(missing_docs)]
 pub enum AvailabilityState {
     Online,
     Offline,

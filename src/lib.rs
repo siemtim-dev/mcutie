@@ -1,6 +1,8 @@
 #![no_std]
 #![doc = include_str!("../README.md")]
 #![deny(unreachable_pub)]
+#![warn(missing_docs)]
+#![cfg_attr(docsrs, feature(doc_auto_cfg))]
 
 use core::{ops::Deref, str};
 
@@ -15,6 +17,7 @@ use once_cell::sync::OnceCell;
 pub use publish::*;
 pub use topic::Topic;
 
+// This must come first so the macros are visible
 pub(crate) mod fmt;
 
 mod buffer;
@@ -56,9 +59,13 @@ fn device_type() -> &'static str {
 /// Various errors
 #[derive(Debug)]
 pub enum Error {
+    /// An IO error occured.
     IOError,
+    /// The operation timed out.
     TimedOut,
+    /// An attempt was made to encode something too large.
     TooLarge,
+    /// A packet or payload could not be decoded or encoded.
     PacketError,
 }
 
@@ -88,6 +95,7 @@ enum ControlMessage {
 pub struct McutieReceiver;
 
 impl McutieReceiver {
+    /// Waits for the next message from the broker.
     pub async fn receive(&self) -> MqttMessage {
         DATA_CHANNEL.receive().await
     }

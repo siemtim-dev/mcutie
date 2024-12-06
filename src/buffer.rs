@@ -23,7 +23,7 @@ impl<const N: usize> Default for Buffer<N> {
 
 impl<const N: usize> Buffer<N> {
     /// Creates a new buffer.
-    pub const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
             bytes: [0; N],
             cursor: 0,
@@ -31,7 +31,7 @@ impl<const N: usize> Buffer<N> {
     }
 
     /// Creates a new buffer and writes the given data into it.
-    pub fn from(buf: &[u8]) -> Result<Self, Error> {
+    pub(crate) fn from(buf: &[u8]) -> Result<Self, Error> {
         let mut buffer = Self::new();
         match buffer.write_all(buf) {
             Ok(()) => Ok(buffer),
@@ -47,7 +47,8 @@ impl<const N: usize> Buffer<N> {
     }
 
     #[cfg(feature = "serde")]
-    pub fn serialize_json<T: serde::Serialize>(
+    /// Serializes a value into this buffer using JSON.
+    pub(crate) fn serialize_json<T: serde::Serialize>(
         &mut self,
         value: &T,
     ) -> Result<(), serde_json_core::ser::Error> {
@@ -58,6 +59,7 @@ impl<const N: usize> Buffer<N> {
     }
 
     #[cfg(feature = "serde")]
+    /// Deserializes this buffer using JSON into the given type.
     pub fn deserialize_json<'a, T: serde::Deserialize<'a>>(
         &'a self,
     ) -> Result<T, serde_json_core::de::Error> {
@@ -72,7 +74,7 @@ impl<const N: usize> Buffer<N> {
     }
 
     /// Resets the buffer discarding any previously written bytes.
-    pub fn reset(&mut self) {
+    pub(crate) fn reset(&mut self) {
         self.cursor = 0;
     }
 }
