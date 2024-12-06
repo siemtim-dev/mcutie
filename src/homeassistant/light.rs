@@ -5,7 +5,10 @@ use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
 
 use crate::{
     homeassistant::{binary_sensor::BinarySensorState, ser::List, Component},
-    Error, Payload, Publishable, Topic,
+    Error,
+    Payload,
+    Publishable,
+    Topic,
 };
 
 #[derive(Serialize)]

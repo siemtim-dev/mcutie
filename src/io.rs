@@ -1,6 +1,6 @@
 use core::ops::Deref;
 
-use crate::fmt::Debug2Format;
+pub(crate) use atomic16::assign_pid;
 use embassy_futures::select::{select, select3, Either};
 use embassy_net::{
     dns::DnsQueryType,
@@ -16,15 +16,34 @@ use embassy_sync::{
 use embassy_time::Timer;
 use embedded_io_async::Write;
 use mqttrs::{
-    decode_slice, Connect, ConnectReturnCode, LastWill, Packet, Pid, Protocol, Publish, QoS, QosPid,
+    decode_slice,
+    Connect,
+    ConnectReturnCode,
+    LastWill,
+    Packet,
+    Pid,
+    Protocol,
+    Publish,
+    QoS,
+    QosPid,
 };
 
 use crate::{
-    device_id, Buffer, ControlMessage, Error, MqttMessage, Payload, Publishable, Topic,
-    TopicString, CONFIRMATION_TIMEOUT, DATA_CHANNEL, DEFAULT_BACKOFF, RESET_BACKOFF,
+    device_id,
+    fmt::Debug2Format,
+    Buffer,
+    ControlMessage,
+    Error,
+    MqttMessage,
+    Payload,
+    Publishable,
+    Topic,
+    TopicString,
+    CONFIRMATION_TIMEOUT,
+    DATA_CHANNEL,
+    DEFAULT_BACKOFF,
+    RESET_BACKOFF,
 };
-
-pub(crate) use atomic16::assign_pid;
 
 static WRITE_BUFFER: Mutex<CriticalSectionRawMutex, Buffer<4096>> = Mutex::new(Buffer::new());
 static WRITE_PENDING: Signal<CriticalSectionRawMutex, ()> = Signal::new();

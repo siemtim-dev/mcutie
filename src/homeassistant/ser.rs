@@ -2,7 +2,8 @@ use core::ops::Deref;
 
 use serde::{
     ser::{SerializeSeq, SerializeStruct},
-    Serialize, Serializer,
+    Serialize,
+    Serializer,
 };
 
 use crate::{

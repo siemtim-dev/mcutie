@@ -10,7 +10,7 @@ description = "A no-std, no-alloc, opinionated MQTT client for IoT devices"
 default = ["homeassistant"]
 homeassistant = ["serde"]
 serde = ["dep:serde", "dep:serde-json-core"]
-defmt = ["dep:defmt"]
+defmt = ["dep:defmt", "embassy-net/defmt"]
 log = ["dep:log"]
 
 [dependencies]
