@@ -249,6 +249,7 @@ where
                     return Err(Error::IOError);
                 }
             }
+
             let mut start_pos = 0;
             loop {
                 let packet_length = match packet_size(&buffer[start_pos..cursor]) {
@@ -260,12 +261,14 @@ where
                     None => {
                         // None is returned when there is not yet enough data to decode a packet.
                         if start_pos != 0 {
+                            // Adjust the buffer to reclaim any unused data
                             buffer.copy_within(start_pos..cursor, 0);
-                            cursor = cursor - start_pos;
+                            cursor -= start_pos;
                         }
                         break;
                     }
                 };
+
                 let packet = match decode_slice(&buffer[start_pos..(start_pos + packet_length)]) {
                     Ok(Some(p)) => p,
                     Ok(None) => {
@@ -359,13 +362,13 @@ where
                     | Packet::Unsubscribe(_)
                     | Packet::Disconnect => {
                         debug!(
-                        "Unexpected packet from broker: {:?}",
-                        Debug2Format(&packet.get_type())
-                    );
+                            "Unexpected packet from broker: {:?}",
+                            Debug2Format(&packet.get_type())
+                        );
                     }
                 }
-                start_pos = start_pos + packet_length;
-                // Adjust the buffer to reclaim any unused data
+
+                start_pos += packet_length;
                 if start_pos == cursor {
                     cursor = 0;
                     break;
