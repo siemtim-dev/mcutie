@@ -9,45 +9,21 @@ use embassy_net::{
 };
 use embassy_sync::{
     blocking_mutex::raw::CriticalSectionRawMutex,
-    mutex::Mutex,
     pubsub::{PubSubChannel, Subscriber, WaitResult},
-    signal::Signal,
 };
 use embassy_time::Timer;
 use embedded_io_async::Write;
 use mqttrs::{
-    decode_slice,
-    Connect,
-    ConnectReturnCode,
-    LastWill,
-    Packet,
-    Pid,
-    Protocol,
-    Publish,
-    QoS,
-    QosPid,
+    decode_slice, Connect, ConnectReturnCode, LastWill, Packet, Pid, Protocol, Publish, QoS, QosPid,
 };
 
 use crate::{
-    device_id,
-    fmt::Debug2Format,
-    Buffer,
-    ControlMessage,
-    Error,
-    MqttMessage,
-    Payload,
-    Publishable,
-    Topic,
-    TopicString,
-    CONFIRMATION_TIMEOUT,
-    DATA_CHANNEL,
-    DEFAULT_BACKOFF,
+    device_id, fmt::Debug2Format, queue::LossyQueue, ControlMessage, Error, MqttMessage, Payload,
+    Publishable, Topic, TopicString, CONFIRMATION_TIMEOUT, DATA_CHANNEL, DEFAULT_BACKOFF,
     RESET_BACKOFF,
 };
 
-static WRITE_BUFFER: Mutex<CriticalSectionRawMutex, Buffer<4096>> = Mutex::new(Buffer::new());
-static WRITE_PENDING: Signal<CriticalSectionRawMutex, ()> = Signal::new();
-static WRITE_COMPLETE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
+static SEND_QUEUE: LossyQueue<CriticalSectionRawMutex, Payload, 10> = LossyQueue::new();
 
 pub(crate) static CONTROL_CHANNEL: PubSubChannel<CriticalSectionRawMutex, ControlMessage, 2, 5, 0> =
     PubSubChannel::new();
@@ -92,27 +68,19 @@ mod atomic16 {
     }
 }
 
-pub(crate) async fn send_packet(packet: Packet<'_>) -> Result<(), Error> {
-    loop {
-        trace!("Waiting for data to be written");
-        WRITE_COMPLETE.wait().await;
+pub(crate) fn send_packet(packet: Packet<'_>) -> Result<(), Error> {
+    let mut buffer = Payload::new();
+    trace!("Encoding packet");
 
-        {
-            let mut buffer = WRITE_BUFFER.lock().await;
-            trace!("Encoding packet");
-
-            match buffer.encode_packet(&packet) {
-                Ok(()) => {
-                    trace!("Signaling data ready");
-                    WRITE_PENDING.signal(());
-                    return Ok(());
-                }
-                Err(mqttrs::Error::WriteZero) => {}
-                Err(_) => {
-                    error!("Failed to send packet");
-                    return Err(Error::PacketError);
-                }
-            }
+    match buffer.encode_packet(&packet) {
+        Ok(()) => {
+            trace!("Sending packet");
+            SEND_QUEUE.push(buffer);
+            Ok(())
+        }
+        Err(_) => {
+            error!("Failed to send packet");
+            Err(Error::PacketError)
         }
     }
 }
@@ -174,7 +142,7 @@ pub(crate) async fn publish(
         payload,
     });
 
-    send_packet(packet).await?;
+    send_packet(packet)?;
 
     if let Some(expected_pid) = pid {
         wait_for_publish(subscriber, expected_pid).await
@@ -325,10 +293,10 @@ where
                         match publish.qospid {
                             mqttrs::QosPid::AtMostOnce => {}
                             mqttrs::QosPid::AtLeastOnce(pid) => {
-                                send_packet(Packet::Puback(pid)).await?;
+                                send_packet(Packet::Puback(pid))?;
                             }
                             mqttrs::QosPid::ExactlyOnce(pid) => {
-                                send_packet(Packet::Pubrec(pid)).await?;
+                                send_packet(Packet::Pubrec(pid))?;
                             }
                         }
                     }
@@ -337,9 +305,9 @@ where
                     }
                     Packet::Pubrec(pid) => {
                         controller.publish_immediate(ControlMessage::Published(pid));
-                        send_packet(Packet::Pubrel(pid)).await?;
+                        send_packet(Packet::Pubrel(pid))?;
                     }
-                    Packet::Pubrel(pid) => send_packet(Packet::Pubrel(pid)).await?,
+                    Packet::Pubrel(pid) => send_packet(Packet::Pubrel(pid))?,
                     Packet::Pubcomp(_) => {}
 
                     Packet::Suback(suback) => {
@@ -378,76 +346,57 @@ where
     }
 
     async fn write_loop(&self, mut writer: TcpWriter<'_>) {
-        // Clear out any old data.
-        {
-            let mut buffer = WRITE_BUFFER.lock().await;
-            buffer.reset();
-            WRITE_PENDING.reset();
+        let mut buffer = Payload::new();
 
-            let mut last_will_topic = TopicString::new();
-            let mut last_will_payload = Payload::new();
+        let mut last_will_topic = TopicString::new();
+        let mut last_will_payload = Payload::new();
 
-            let last_will = self.last_will.as_ref().and_then(|p| {
-                if p.write_topic(&mut last_will_topic).is_ok()
-                    && p.write_payload(&mut last_will_payload).is_ok()
-                {
-                    Some(LastWill {
-                        topic: &last_will_topic,
-                        message: &last_will_payload,
-                        qos: p.qos(),
-                        retain: p.retain(),
-                    })
-                } else {
-                    None
-                }
-            });
-
-            // Send our connection request.
-            if buffer
-                .encode_packet(&Packet::Connect(Connect {
-                    protocol: Protocol::MQTT311,
-                    keep_alive: 60,
-                    client_id: device_id(),
-                    clean_session: true,
-                    last_will,
-                    username: self.username,
-                    password: self.password.map(|s| s.as_bytes()),
-                }))
-                .is_err()
+        let last_will = self.last_will.as_ref().and_then(|p| {
+            if p.write_topic(&mut last_will_topic).is_ok()
+                && p.write_payload(&mut last_will_payload).is_ok()
             {
-                error!("Failed to encode connection packet");
-                return;
+                Some(LastWill {
+                    topic: &last_will_topic,
+                    message: &last_will_payload,
+                    qos: p.qos(),
+                    retain: p.retain(),
+                })
+            } else {
+                None
             }
+        });
 
-            if let Err(e) = writer.write_all(&buffer).await {
-                error!("Failed to send connection packet: {:?}", e);
-                return;
-            }
+        // Send our connection request.
+        if buffer
+            .encode_packet(&Packet::Connect(Connect {
+                protocol: Protocol::MQTT311,
+                keep_alive: 60,
+                client_id: device_id(),
+                clean_session: true,
+                last_will,
+                username: self.username,
+                password: self.password.map(|s| s.as_bytes()),
+            }))
+            .is_err()
+        {
+            error!("Failed to encode connection packet");
+            return;
+        }
 
-            buffer.reset();
-
-            WRITE_COMPLETE.signal(());
+        if let Err(e) = writer.write_all(&buffer).await {
+            error!("Failed to send connection packet: {:?}", e);
+            return;
         }
 
         loop {
             trace!("Writer waiting for data");
-            WRITE_PENDING.wait().await;
+            let buffer = SEND_QUEUE.pop().await;
 
-            {
-                let mut buffer = WRITE_BUFFER.lock().await;
-                WRITE_PENDING.reset();
-                trace!("Writer locked data");
-
-                if let Err(e) = writer.write_all(&buffer).await {
-                    error!("Failed to send data: {:?}", e);
-                    return;
-                }
-
-                buffer.reset();
+            trace!("Writer sending data");
+            if let Err(e) = writer.write_all(&buffer).await {
+                error!("Failed to send data: {:?}", e);
+                return;
             }
-
-            trace!("Writer signaling completion");
-            WRITE_COMPLETE.signal(());
         }
     }
 
@@ -505,7 +454,7 @@ where
                 loop {
                     Timer::after_secs(45).await;
 
-                    let _ = send_packet(Packet::Pingreq).await;
+                    let _ = send_packet(Packet::Pingreq);
                 }
             };
 

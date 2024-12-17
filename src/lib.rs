@@ -25,6 +25,7 @@ mod buffer;
 pub mod homeassistant;
 mod io;
 mod publish;
+mod queue;
 mod topic;
 
 // This really needs to match that used by mqttrs.

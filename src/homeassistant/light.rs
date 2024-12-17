@@ -4,11 +4,9 @@ use core::{ops::Deref, str};
 use serde::{ser::SerializeStruct, Deserialize, Serialize, Serializer};
 
 use crate::{
+    fmt::Debug2Format,
     homeassistant::{binary_sensor::BinarySensorState, ser::List, Component},
-    Error,
-    Payload,
-    Publishable,
-    Topic,
+    Error, Payload, Publishable, Topic,
 };
 
 #[derive(Serialize)]
@@ -129,7 +127,7 @@ impl<'a> LightState<'a> {
         let parsed: LedPayload<'a> = match payload.deserialize_json() {
             Ok(p) => p,
             Err(e) => {
-                warn!("Failed to deserialize packet: {:?}", e);
+                warn!("Failed to deserialize packet: {:?}", Debug2Format(&e));
                 if let Ok(s) = str::from_utf8(payload) {
                     trace!("{}", s);
                 }
