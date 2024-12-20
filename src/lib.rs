@@ -24,8 +24,8 @@ mod buffer;
 #[cfg(feature = "homeassistant")]
 pub mod homeassistant;
 mod io;
+mod pipe;
 mod publish;
-mod queue;
 mod topic;
 
 // This really needs to match that used by mqttrs.

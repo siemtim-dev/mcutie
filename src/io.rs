@@ -14,36 +14,16 @@ use embassy_sync::{
 use embassy_time::Timer;
 use embedded_io_async::Write;
 use mqttrs::{
-    decode_slice,
-    Connect,
-    ConnectReturnCode,
-    LastWill,
-    Packet,
-    Pid,
-    Protocol,
-    Publish,
-    QoS,
-    QosPid,
+    decode_slice, Connect, ConnectReturnCode, LastWill, Packet, Pid, Protocol, Publish, QoS, QosPid,
 };
 
 use crate::{
-    device_id,
-    fmt::Debug2Format,
-    queue::LossyQueue,
-    ControlMessage,
-    Error,
-    MqttMessage,
-    Payload,
-    Publishable,
-    Topic,
-    TopicString,
-    CONFIRMATION_TIMEOUT,
-    DATA_CHANNEL,
-    DEFAULT_BACKOFF,
+    device_id, fmt::Debug2Format, pipe::ConnectedPipe, ControlMessage, Error, MqttMessage, Payload,
+    Publishable, Topic, TopicString, CONFIRMATION_TIMEOUT, DATA_CHANNEL, DEFAULT_BACKOFF,
     RESET_BACKOFF,
 };
 
-static SEND_QUEUE: LossyQueue<CriticalSectionRawMutex, Payload, 10> = LossyQueue::new();
+static SEND_QUEUE: ConnectedPipe<CriticalSectionRawMutex, Payload, 10> = ConnectedPipe::new();
 
 pub(crate) static CONTROL_CHANNEL: PubSubChannel<CriticalSectionRawMutex, ControlMessage, 2, 5, 0> =
     PubSubChannel::new();
@@ -88,14 +68,13 @@ mod atomic16 {
     }
 }
 
-pub(crate) fn send_packet(packet: Packet<'_>) -> Result<(), Error> {
+pub(crate) async fn send_packet(packet: Packet<'_>) -> Result<(), Error> {
     let mut buffer = Payload::new();
-    trace!("Encoding packet");
 
     match buffer.encode_packet(&packet) {
         Ok(()) => {
-            trace!("Sending packet");
-            SEND_QUEUE.push(buffer);
+            trace!("Pushing new packet for broker");
+            SEND_QUEUE.push(buffer).await;
             Ok(())
         }
         Err(_) => {
@@ -162,7 +141,7 @@ pub(crate) async fn publish(
         payload,
     });
 
-    send_packet(packet)?;
+    send_packet(packet).await?;
 
     if let Some(expected_pid) = pid {
         wait_for_publish(subscriber, expected_pid).await
@@ -313,10 +292,10 @@ where
                         match publish.qospid {
                             mqttrs::QosPid::AtMostOnce => {}
                             mqttrs::QosPid::AtLeastOnce(pid) => {
-                                send_packet(Packet::Puback(pid))?;
+                                send_packet(Packet::Puback(pid)).await?;
                             }
                             mqttrs::QosPid::ExactlyOnce(pid) => {
-                                send_packet(Packet::Pubrec(pid))?;
+                                send_packet(Packet::Pubrec(pid)).await?;
                             }
                         }
                     }
@@ -325,9 +304,9 @@ where
                     }
                     Packet::Pubrec(pid) => {
                         controller.publish_immediate(ControlMessage::Published(pid));
-                        send_packet(Packet::Pubrel(pid))?;
+                        send_packet(Packet::Pubrel(pid)).await?;
                     }
-                    Packet::Pubrel(pid) => send_packet(Packet::Pubrel(pid))?,
+                    Packet::Pubrel(pid) => send_packet(Packet::Pubrel(pid)).await?,
                     Packet::Pubcomp(_) => {}
 
                     Packet::Suback(suback) => {
@@ -408,9 +387,11 @@ where
             return;
         }
 
+        let reader = SEND_QUEUE.reader();
+
         loop {
             trace!("Writer waiting for data");
-            let buffer = SEND_QUEUE.pop().await;
+            let buffer = reader.receive().await;
 
             trace!("Writer sending data");
             if let Err(e) = writer.write_all(&buffer).await {
@@ -474,7 +455,7 @@ where
                 loop {
                     Timer::after_secs(45).await;
 
-                    let _ = send_packet(Packet::Pingreq);
+                    let _ = send_packet(Packet::Pingreq).await;
                 }
             };
 
