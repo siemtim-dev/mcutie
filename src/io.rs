@@ -14,7 +14,8 @@ use embassy_sync::{
 use embassy_time::Timer;
 use embedded_io_async::Write;
 use mqttrs::{
-    decode_slice, Connect, ConnectReturnCode, LastWill, Packet, Pid, Protocol, Publish, QoS, QosPid,
+    decode_slice_with_len, Connect, ConnectReturnCode, LastWill, Packet, Pid, Protocol, Publish,
+    QoS, QosPid,
 };
 
 use crate::{
@@ -153,28 +154,6 @@ pub(crate) async fn publish(
     }
 }
 
-fn packet_size(buffer: &[u8]) -> Option<usize> {
-    let mut pos = 1;
-    let mut multiplier = 1;
-    let mut value = 0;
-
-    while pos < buffer.len() {
-        value += (buffer[pos] & 127) as usize * multiplier;
-        multiplier *= 128;
-
-        if (buffer[pos] & 128) == 0 {
-            return Some(value + pos + 1);
-        }
-
-        pos += 1;
-        if pos == 5 {
-            return Some(0);
-        }
-    }
-
-    None
-}
-
 /// The MQTT task that must be run in order for the stack to operate.
 pub struct McutieTask<'t, T, L, const S: usize>
 where
@@ -222,13 +201,12 @@ where
 
             let mut start_pos = 0;
             loop {
-                let packet_length = match packet_size(&buffer[start_pos..cursor]) {
-                    Some(0) => {
-                        error!("Invalid MQTT packet");
-                        return Err(Error::PacketError);
+                let packet = match decode_slice_with_len(&buffer[start_pos..cursor]) {
+                    Ok(Some((packet_length, packet))) => {
+                        start_pos += packet_length;
+                        packet
                     }
-                    Some(len) => len,
-                    None => {
+                    Ok(None) => {
                         // None is returned when there is not yet enough data to decode a packet.
                         if start_pos != 0 {
                             // Adjust the buffer to reclaim any unused data
@@ -236,14 +214,6 @@ where
                             cursor -= start_pos;
                         }
                         break;
-                    }
-                };
-
-                let packet = match decode_slice(&buffer[start_pos..(start_pos + packet_length)]) {
-                    Ok(Some(p)) => p,
-                    Ok(None) => {
-                        error!("Packet length calculation failed.");
-                        return Err(Error::PacketError);
                     }
                     Err(_) => {
                         error!("Invalid MQTT packet");
@@ -338,7 +308,6 @@ where
                     }
                 }
 
-                start_pos += packet_length;
                 if start_pos == cursor {
                     cursor = 0;
                     break;
