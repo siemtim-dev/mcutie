@@ -1,4 +1,4 @@
 # Imports
 group_imports = "StdExternalCrate"
 imports_granularity = "Crate"
-imports_layout = "HorizontalVertical"
+imports_layout = "Mixed"
