@@ -1,7 +1,7 @@
 use core::ops::Deref;
 
 pub(crate) use atomic16::assign_pid;
-use embassy_futures::select::{select, select3, Either};
+use embassy_futures::select::{select, select4, Either};
 use embassy_net::{
     dns::DnsQueryType,
     tcp::{TcpReader, TcpSocket, TcpWriter},
@@ -73,7 +73,10 @@ pub(crate) async fn send_packet(packet: Packet<'_>) -> Result<(), Error> {
 
     match buffer.encode_packet(&packet) {
         Ok(()) => {
-            trace!("Pushing new packet for broker");
+            debug!(
+                "Sending packet to broker: {:?}",
+                Debug2Format(&packet.get_type())
+            );
             SEND_QUEUE.push(buffer).await;
             Ok(())
         }
@@ -248,7 +251,7 @@ where
                     }
                 };
 
-                trace!(
+                debug!(
                     "Received packet from broker: {:?}",
                     Debug2Format(&packet.get_type())
                 );
@@ -390,10 +393,9 @@ where
         let reader = SEND_QUEUE.reader();
 
         loop {
-            trace!("Writer waiting for data");
             let buffer = reader.receive().await;
 
-            trace!("Writer sending data");
+            trace!("Writer sending packet");
             if let Err(e) = writer.write_all(&buffer).await {
                 error!("Failed to send data: {:?}", e);
                 return;
@@ -401,7 +403,7 @@ where
         }
     }
 
-    /// Runs the MQTT stack. The future returns from this must be awaited for everything to work.
+    /// Runs the MQTT stack. The future returned from this must be awaited for everything to work.
     pub async fn run(self) {
         let mut timeout: Option<u64> = None;
 
@@ -414,9 +416,9 @@ where
             }
 
             if !self.network.is_config_up() {
-                trace!("Waiting for network to configure.");
+                debug!("Waiting for network to configure.");
                 self.network.wait_config_up().await;
-                trace!("Network configured.");
+                debug!("Network configured.");
             }
 
             let ip_addrs = match self.network.dns_query(self.broker, DnsQueryType::A).await {
@@ -435,7 +437,7 @@ where
                 }
             };
 
-            trace!("Connecting to {}:1883", ip);
+            debug!("Connecting to {}:1883", ip);
 
             let mut socket = TcpSocket::new(self.network, &mut rx_buffer, &mut tx_buffer);
             if let Err(e) = socket.connect((ip, 1883)).await {
@@ -459,10 +461,21 @@ where
                 }
             };
 
-            select3(send_loop, ping_loop, recv_loop).await;
+            let link_down = async {
+                self.network.wait_link_down().await;
+                warn!("Network link lost");
+            };
+
+            let ip_down = async {
+                self.network.wait_config_down().await;
+                warn!("Network config lost");
+            };
+
+            select4(send_loop, ping_loop, recv_loop, select(link_down, ip_down)).await;
 
             socket.close();
 
+            warn!("Lost connection with broker");
             DATA_CHANNEL.send(MqttMessage::Disconnected).await;
         }
     }

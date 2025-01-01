@@ -113,7 +113,6 @@ impl<M: RawMutex, T, const N: usize> Future for PushFuture<'_, M, T, N> {
                 swap_wakers(&mut inner.sender_waker, cx.waker());
                 Poll::Pending
             } else {
-                trace!("Pushed packet to receiver");
                 inner.pending = project.data.take();
 
                 Poll::Ready(())
