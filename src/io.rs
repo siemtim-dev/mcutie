@@ -2,26 +2,22 @@ use core::ops::Deref;
 
 pub(crate) use atomic16::assign_pid;
 use embassy_futures::select::{select, select4, Either};
-use embassy_net::{
-    dns::DnsQueryType,
-    tcp::{TcpReader, TcpSocket, TcpWriter},
-    Stack,
-};
+use embassy_net::tcp::{TcpReader, TcpWriter};
 use embassy_sync::{
     blocking_mutex::raw::CriticalSectionRawMutex,
     pubsub::{PubSubChannel, Subscriber, WaitResult},
 };
 use embassy_time::Timer;
-use embedded_io_async::Write;
+use embedded_io_async::{Read, Write};
 use mqttrs::{
     decode_slice, Connect, ConnectReturnCode, LastWill, Packet, Pid, Protocol, Publish, QoS, QosPid,
 };
 
 use crate::{
-    device_id, fmt::Debug2Format, pipe::ConnectedPipe, ControlMessage, Error, MqttMessage, Payload,
-    Publishable, Topic, TopicString, CONFIRMATION_TIMEOUT, DATA_CHANNEL, DEFAULT_BACKOFF,
-    RESET_BACKOFF,
+    device_id, fmt::Debug2Format, network::Network, pipe::ConnectedPipe, ControlMessage, Error, MqttMessage, Payload, Publishable, Topic, TopicString, CONFIRMATION_TIMEOUT, DATA_CHANNEL, DEFAULT_BACKOFF, RESET_BACKOFF
 };
+
+use crate::network::TcpConnection;
 
 static SEND_QUEUE: ConnectedPipe<CriticalSectionRawMutex, Payload, 10> = ConnectedPipe::new();
 
@@ -176,12 +172,13 @@ fn packet_size(buffer: &[u8]) -> Option<usize> {
 }
 
 /// The MQTT task that must be run in order for the stack to operate.
-pub struct McutieTask<'t, T, L, const S: usize>
+pub struct McutieTask<'t, T, L, N, const S: usize>
 where
     T: Deref<Target = str> + 't,
     L: Publishable + 't,
+    N: Network<'t>,
 {
-    pub(crate) network: Stack<'t>,
+    pub(crate) network: N,
     pub(crate) broker: &'t str,
     pub(crate) last_will: Option<L>,
     pub(crate) username: Option<&'t str>,
@@ -189,17 +186,18 @@ where
     pub(crate) subscriptions: [Topic<T>; S],
 }
 
-impl<'t, T, L, const S: usize> McutieTask<'t, T, L, S>
+impl<'t, 'i, T, L, N, const S: usize> McutieTask<'t, T, L, N, S>
 where
     T: Deref<Target = str> + 't,
     L: Publishable + 't,
+    N: Network<'t>,
 {
     #[cfg(not(feature = "homeassistant"))]
     async fn ha_handle_update(&self, _topic: &Topic<TopicString>, _payload: &Payload) -> bool {
         false
     }
 
-    async fn recv_loop(&self, mut reader: TcpReader<'_>) -> Result<(), Error> {
+    async fn recv_loop(&self, mut reader: impl Read) -> Result<(), Error> {
         let mut buffer = [0_u8; 4096];
         let mut cursor: usize = 0;
 
@@ -347,7 +345,7 @@ where
         }
     }
 
-    async fn write_loop(&self, mut writer: TcpWriter<'_>) {
+    async fn write_loop(&self, mut writer: impl Write) {
         let mut buffer = Payload::new();
 
         let mut last_will_topic = TopicString::new();
@@ -407,43 +405,26 @@ where
     pub async fn run(self) {
         let mut timeout: Option<u64> = None;
 
-        let mut rx_buffer = [0; 4096];
-        let mut tx_buffer = [0; 4096];
-
         loop {
             if let Some(millis) = timeout.replace(DEFAULT_BACKOFF) {
                 Timer::after_millis(millis).await;
             }
 
-            if !self.network.is_config_up() {
-                debug!("Waiting for network to configure.");
-                self.network.wait_config_up().await;
-                debug!("Network configured.");
-            }
-
-            let ip_addrs = match self.network.dns_query(self.broker, DnsQueryType::A).await {
-                Ok(v) => v,
-                Err(e) => {
-                    error!("Failed to lookup '{}' for broker: {:?}", self.broker, e);
-                    continue;
-                }
-            };
-
-            let ip = match ip_addrs.first() {
-                Some(i) => *i,
-                None => {
-                    error!("No IP address found for broker '{}'", self.broker);
-                    continue;
-                }
-            };
-
-            debug!("Connecting to {}:1883", ip);
-
-            let mut socket = TcpSocket::new(self.network, &mut rx_buffer, &mut tx_buffer);
-            if let Err(e) = socket.connect((ip, 1883)).await {
-                error!("Failed to connect to {}:1883: {:?}", ip, e);
+            if let Err(_) = self.network.ready().await {
                 continue;
             }
+
+            let mut rx_buffer = [0; 4096];
+            let mut tx_buffer = [0; 4096];
+
+            let connect_result = self.network.connect(self.broker, 1883, &mut rx_buffer, &mut tx_buffer).await;
+            
+            let mut socket = match connect_result {
+                Ok(s) => s,
+                Err(_) => {
+                    continue;
+                },
+            };
 
             info!("Connected to {}", self.broker);
             timeout = Some(RESET_BACKOFF);
@@ -461,17 +442,12 @@ where
                 }
             };
 
-            let link_down = async {
-                self.network.wait_link_down().await;
-                warn!("Network link lost");
+            let network_down = async {
+                self.network.net_down().await;
+                error!("network down!");
             };
 
-            let ip_down = async {
-                self.network.wait_config_down().await;
-                warn!("Network config lost");
-            };
-
-            select4(send_loop, ping_loop, recv_loop, select(link_down, ip_down)).await;
+            select4(send_loop, ping_loop, recv_loop, network_down).await;
 
             socket.close();
 

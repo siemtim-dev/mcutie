@@ -28,6 +28,9 @@ mod pipe;
 mod publish;
 mod topic;
 
+/// Module that contains the network absractions
+pub mod network;
+
 // This really needs to match that used by mqttrs.
 const TOPIC_LENGTH: usize = 256;
 const PAYLOAD_LENGTH: usize = 2048;
