@@ -390,10 +390,10 @@ where
             return;
         }
 
-        let reader = SEND_QUEUE.reader();
-
         loop {
+            let reader = SEND_QUEUE.reader();
             let buffer = reader.receive().await;
+            
 
             trace!("Writer sending packet");
             if let Err(e) = writer.write_all(&buffer).await {
